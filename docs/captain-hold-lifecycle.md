@@ -16,6 +16,7 @@ This document records the deterministic mechanism, structured surfaces, compatib
 | How is a call closed when it stopped being a question? | [Reconcile](#reconcile-re-check-reality-never-a-blind-close) |
 | Why did a decision card disappear from the board? | [Card hygiene](#card-hygiene-a-landed-subject-is-not-a-live-call) |
 | Where does a hold appear in snapshots and Bearings? | [Structured read surfaces](#structured-read-surfaces) |
+| Where is a decision's full write-up stored and shown? | [Decision write-ups](#decision-write-ups) |
 | What does a `RECORD DIVERGENCE` section mean? | [Record divergence](#record-divergence) |
 | How do rows from older installs still work? | [Compatibility with pre-collapse installs](#compatibility-with-pre-collapse-installs) |
 | Which tests prove this, and how is the record refreshed? | [Verification record](#verification-record) |
@@ -34,6 +35,7 @@ It never reads report bodies, review artifacts, terminal output, or chat.
 | Subcommand | What it does | Details |
 | --- | --- | --- |
 | `hold` | Creates or reuses a task and holds it for the captain. | [Creating a hold](#creating-a-hold-hold) |
+| `brief` | Prints the decision write-up stored with a hold. | [Decision write-ups](#decision-write-ups) |
 | `answer` | Records the captain's exact words and resolves the call. | [Answering a call](#answering-a-call-answer) |
 | `complete` | Records the reviewed captain-held task ids in the originating task's metadata. | [Recording a reviewed inventory](#recording-a-reviewed-inventory-complete) |
 | `verify` | Read-only check that scout teardown runs before removing source state. | [Checking before scout teardown](#checking-before-scout-teardown-verify) |
@@ -67,6 +69,23 @@ Repeat and edge cases:
   If that write fails, the backend hold is not attempted.
 - The reason may contain parentheses, semicolons, quotes, and line breaks.
   [`bin/fm-hold-reason-lib.sh`](../bin/fm-hold-reason-lib.sh) owns the storage encoding and compatibility rules; [`bin/fm-tasks-axi.sh --help`](../bin/fm-tasks-axi.sh) owns the public read commands and output contract.
+
+### Decision write-ups
+
+`hold --brief-file <path>` attaches the full case for a decision: the question, why it matters, the background, each option with its consequence, and the recommendation with its reason.
+[`bin/fm-decision-brief-lib.sh`](../bin/fm-decision-brief-lib.sh) owns the field contract, validation, and storage, and `brief <task-id> [--json]` reads the stored record back.
+The record is stored as `captain-briefs/<task-id>.json` beside the backlog in the home's data directory, before the hold becomes visible, so a refused write-up changes nothing.
+Holding again with an identical write-up rewrites nothing, a different one replaces it, and a hold without one never touches it.
+The record outlives the hold as the history of what the captain was shown, and only an open call's write-up is surfaced.
+
+Every surface reads that one record rather than re-summarizing:
+
+- `bin/fm-bearings-snapshot.sh` lists `decision_briefs{id,path,question}` for shown main-home decisions, and `--fields briefs` adds the full write-up.
+- `bin/fm-bearings-board.sh build` validates an optional `brief` on a `decision` card and fills it from the stored record by task id, replacing any composer copy.
+- The board template renders the sections, a consequence line per option, and a "brief me" full view.
+- `/ahoy` and chat read the same record through `brief`.
+
+A secondmate-owned decision's write-up stays in that secondmate home and is not projected into the main snapshot.
 
 ### Answering a call (`answer`)
 
@@ -636,6 +655,7 @@ Projection regressions live in two suites:
 | Suite | What it covers |
 | --- | --- |
 | `tests/fm-fleet-snapshot-view.test.sh` | The total structured-only bucket classifier, hold-until parsing, kind-independent captain actionability, undated-hold aging, and title stripping. |
+| `tests/fm-captain-hold-lifecycle.test.sh`, `tests/fm-bearings-board.test.sh`, `tests/fm-bearings-board-render.test.sh` | Decision write-ups: the hold round trip and idempotent re-hold, refusal of an invalid write-up before any change, snapshot exposure, board payload validation and stored-record injection, the rendered sections and brief-me view, and unchanged behavior without a write-up. |
 | `tests/fm-bearings-snapshot.test.sh` | Default and expanded decision-bucket membership, deferral explanations, blocker-overflow disclosure, working-hold dual surfaces, remote-summary schema invalidation, exact leading-kind inference, artifact-kind mismatch and answered-question exclusion, kind-bearing and kindless local-only landings publishing their recorded note, and scout-report precedence over competing pull-request links. |
 
 ### Refreshing this record

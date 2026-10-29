@@ -57,6 +57,15 @@
 # gaps in omitted[] and, when invalid, a Charted Next gate line so the four-section
 # chat cannot claim an empty fleet while main current state is broken.
 #
+# Decision write-ups: a main-home open decision whose hold carried a stored
+# write-up (bin/fm-decision-brief-lib.sh owns the record, bin/fm-captain-hold.sh
+# `hold --brief-file` stores it) is listed in decision_briefs{id,path,question},
+# emitted only when at least one exists, so a fleet without write-ups renders
+# exactly as before. --fields briefs adds each row's full structured write-up as
+# `brief` (a compact JSON cell in TOON). Only a decision shown in decisions_open
+# is listed, and secondmate-owned decisions are not (their write-up lives in the
+# secondmate home). The board builder resolves the same record by task id.
+#
 # An open away-return catch-up is disclosed the same way, as a single action-free
 # (return-catchup) gate row naming the blockers left to clear or the reason the
 # catch-up was retained. Reporting is not ordinary captain work, so the gate never
@@ -77,7 +86,7 @@
 #   (default)        compact projection with bounded remote-ledger collection, TOON
 #   --json           the same projected model as JSON (machine/debug; parity form)
 #   --include-prs    ALSO do live GitHub open-PR discovery + checks
-#   --fields <list>  opt in to dropped surfaces: bodies,paths,actions,endpoints
+#   --fields <list>  opt in to dropped surfaces: bodies,paths,actions,endpoints,briefs
 #   --all-in-flight  include every in-flight task
 #   --all-decisions  include every open decision and captain hold in the bounded snapshot
 #   --all-secondmates include every aggregated secondmate record
@@ -98,6 +107,9 @@ FLEET="$SCRIPT_DIR/fm-fleet-snapshot.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-decision-brief-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-decision-brief-lib.sh"
 # shellcheck source=bin/fm-landed-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-landed-lib.sh"  # FM_LANDED_JQ_DEFS: the shared landed selector
@@ -150,6 +162,8 @@ Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
   decisions_open{id,key,verb,summary,owner}, landed{id,what,artifact,owner},
   gates{id,title,blocked_by,reason,owner,filed}, reports{id,path}, recorded_prs{id,url},
+  decision_briefs{id,path,question} (only when a shown main-home decision has a stored
+  write-up; --fields briefs adds the full write-up as brief),
   unhealthy_endpoints{...} (only when non-empty), omitted{surface,reveal}.
 Default gates are selected newest filed first before their bound; undated gates
   retain input order after dated gates.
@@ -163,7 +177,7 @@ For every registered secondmate, readable structured facts from its own home are
   Parent events and bounded terminal reads are labeled fallback or contradiction
   evidence and never become current work. The provenance and freshness fields
   distinguish live and cached ledgers; a home without either is explicitly unreadable.
-Opt-in surfaces: --fields bodies|paths|actions|endpoints, --all-in-flight,
+Opt-in surfaces: --fields bodies|paths|actions|endpoints|briefs, --all-in-flight,
   --all-decisions (all open decisions and captain holds in the bounded snapshot),
   --all-secondmates, --all-landed, --all-reports, --all-queued, --all-recorded-prs,
   --all-unhealthy, --all-pr-repos, --include-prs (adds candidate_prs).
@@ -242,6 +256,20 @@ else
 fi
 HOME_LABEL=$(printf '%s' "$SNAP" | jq -er '.fm_home | strings | split("/") | (.[-2:] | join("/"))') \
   || { echo "fm-bearings-snapshot: invalid canonical snapshot" >&2; exit 1; }
+
+# Stored decision write-ups by task id (main home only), read once. A record
+# that no longer satisfies the contract is skipped rather than shown.
+BRIEFS_DIR=$(fm_decision_brief_dir "${FM_DATA_OVERRIDE:-$(printf '%s' "$SNAP" | jq -r '.fm_home')/data}")
+BRIEFS='{}'
+if [ -d "$BRIEFS_DIR" ]; then
+  for brief_file in "$BRIEFS_DIR"/*.json; do
+    [ -f "$brief_file" ] || continue
+    brief_id=$(basename "$brief_file" .json)
+    brief_json=$(jq -c "$FM_DECISION_BRIEF_JQ_DEFS"'select(brief_valid) | brief_normalized' "$brief_file" 2>/dev/null) || continue
+    [ -n "$brief_json" ] || continue
+    BRIEFS=$(printf '%s' "$BRIEFS" | jq -c --arg id "$brief_id" --argjson brief "$brief_json" '. + {($id): $brief}')
+  done
+fi
 
 # --- optional live GitHub PR enrichment -------------------------------------
 PR_STATUS='not_requested (run: /bearings include PRs)'
@@ -380,6 +408,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   --argjson pr_rows_capped "$PR_ROWS_CAPPED" \
   --argjson pr_rows_min_total "$PR_ROWS_MIN_TOTAL" \
   --argjson return_catchup "$RETURN_CATCHUP" \
+  --argjson briefs "$BRIEFS" \
+  --arg briefs_dir_name "captain-briefs" \
   --argjson candidate_prs "$CANDIDATE_PRS" "$FM_LANDED_JQ_DEFS"'
   def trunc($n): if . == null then null else
     (tostring | gsub("\\s+"; " ") | if (length > $n) then (.[:$n] + "…") else . end) end;
@@ -443,6 +473,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   | (($fl | index("paths")) != null) as $f_paths
   | (($fl | index("actions")) != null) as $f_actions
   | (($fl | index("endpoints")) != null) as $f_endpoints
+  | (($fl | index("briefs")) != null) as $f_briefs
   | ([ .backlog.records[] | select(landed_record)
        | {id, title, kind, hold_kind, pr_url, report_path, local_note, completion,
           home:"(main)", home_id:"(main)"} ]) as $main_done
@@ -652,6 +683,11 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   | . + (if ($unhealthy_all | length) > 0 then
            {unhealthy_endpoints:(if $all_unhealthy == 1 then $unhealthy_all else $unhealthy_all[:$unhealthy_n] end)}
          else {} end)
+  | . + ([ .decisions_open[] | select(.owner == "(main)" and ($briefs[.key] != null))
+           | . as $d | $briefs[$d.key] as $b
+           | {id:$d.key, path:("data/" + $briefs_dir_name + "/" + $d.key + ".json"), question:($b.question | trunc(120))}
+             + (if $f_briefs then {brief:$b} else {} end) ] as $briefed
+         | if ($briefed | length) > 0 then {decision_briefs:$briefed} else {} end)
   | . + (if $include_prs == 1 then {candidate_prs:$candidate_prs} else {} end)
   | . + (if $f_bodies then {bodies:[ $snap.backlog.records[] | select(.structured and (.state == "queued" or .state == "done")) | {id, body:((.body_excerpt // .raw // "-") | trunc(200))} ]} else {} end)
   | . + (if $f_paths then {paths:[ $snap.tasks[] | {id, worktree:(.paths.worktree.path // "-"), home:(.paths.home.path // "-"), status:.paths.status_log.path, report:.paths.report.path} ]} else {} end)
@@ -662,6 +698,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
         (if $f_paths then empty else {surface:"task paths", reveal:"--fields paths"} end),
         (if $f_actions then empty else {surface:"watch/steer actions", reveal:"--fields actions"} end),
         (if $f_endpoints then empty else {surface:"healthy endpoint detail", reveal:"--fields endpoints"} end),
+        (if $f_briefs or ((.decision_briefs // []) | length) == 0 then empty else {surface:"full decision write-ups", reveal:"--fields briefs"} end),
         (if $all_reports == 1 then empty else {surface:"full scout-report inventory", reveal:"--all-reports"} end),
         (if $all_landed == 0 and ($per_home_capped | length) > ($done | length) then {surface:("landed showing \($done | length) of \($per_home_capped | length)" + (($done | map(.home_id) | unique | map(select(. != "(main)")) | length) as $k | if $k > 0 then " (incl. \($k) secondmate home(s))" else "" end)), reveal:"--all-landed"} else empty end),
         (if $all_landed == 0 and $home_cap_dropped > 0 then {surface:("landed per-home capped at \($landed_per_home_n) for \($home_cap_dropped) home(s)"), reveal:"--all-landed"} else empty end),

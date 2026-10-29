@@ -200,6 +200,23 @@ a { color: inherit; text-decoration: none; }
 .bb-ctx__v { font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.4; min-width: 0; }
 .bb-decision__link { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--ocean-600); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
 .bb-decision__link:hover { text-decoration: underline; }
+/* decision write-up: labelled sections, line breaks kept, and the "brief me" full view */
+.bb-brief { display: flex; flex-direction: column; gap: 10px; }
+.bb-brief__sec { display: flex; flex-direction: column; gap: 3px; }
+.bb-brief__k { font-family: var(--font-mono); font-size: var(--fs-2xs); letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--text-faint); }
+.bb-brief__v { margin: 0; font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.45;
+  white-space: pre-line; overflow-wrap: anywhere; }
+.bb-brief__v--rec { color: var(--text-strong); }
+.bb-brief__me { align-self: flex-start; font-family: var(--font-sans); font-size: var(--fs-xs); font-weight: 800;
+  color: var(--ocean-600); background: none; border: 1.5px solid var(--border-default);
+  border-radius: var(--radius-pill); padding: 5px 12px; cursor: pointer; }
+.bb-brief__me:hover { border-color: var(--ink-500); }
+.bb-brief__me:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.bb-brief__full { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px;
+  background: var(--surface-card-warm); border: 1.5px solid var(--border-default); border-radius: var(--radius-sm); }
+.bb-brief__full[hidden] { display: none; }
+.bb-brief__list { margin: 0; padding-left: 18px; font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.45; }
 /* One rhythm owner: the answer form is a flex column with the same 12px gap as
    the card pad, and the foot rides margin-top:auto so every Queue answer button
    sits on the same baseline with identical breathing room. */
@@ -484,7 +501,68 @@ __FM_BEARINGS_BOARD_DATA__
     return row;
   }
 
+  /* The decision write-up (item.brief) renders as labelled sections; every field
+     is optional here because the builder validated the shape, and a card with no
+     write-up renders exactly as before. */
+  function briefText(v) { return typeof v === "string" ? v : ""; }
+  function briefSec(label, text, cls) {
+    var sec = el("div", "bb-brief__sec");
+    sec.appendChild(el("span", "bb-brief__k", label));
+    sec.appendChild(el("p", "bb-brief__v" + (cls ? " " + cls : ""), text));
+    return sec;
+  }
+  function briefRecommendation(brief, item) {
+    var rec = briefText(brief.recommend_value || item.recommend_value);
+    var label = rec;
+    (brief.options || []).concat(item.options || []).some(function (o) {
+      if (o && o.value === rec && o.label) { label = o.label; return true; }
+      return false;
+    });
+    var reason = briefText(brief.recommend_reason);
+    return (label ? label + ": " : "") + reason;
+  }
+  function briefSections(brief, item) {
+    var box = el("div", "bb-brief");
+    if (brief.why_it_matters) box.appendChild(briefSec("why it matters", briefText(brief.why_it_matters)));
+    if (brief.background) box.appendChild(briefSec("background", briefText(brief.background)));
+    if (brief.recommend_reason) box.appendChild(briefSec("recommendation", briefRecommendation(brief, item), "bb-brief__v--rec"));
+
+    var full = el("div", "bb-brief__full");
+    full.hidden = true;
+    if (brief.question) full.appendChild(briefSec("decision", briefText(brief.question)));
+    if (brief.asked) full.appendChild(briefSec("raised", briefText(brief.asked)));
+    if (brief.why_it_matters) full.appendChild(briefSec("why it matters", briefText(brief.why_it_matters)));
+    if (brief.background) full.appendChild(briefSec("background", briefText(brief.background)));
+    var optSec = el("div", "bb-brief__sec");
+    optSec.appendChild(el("span", "bb-brief__k", "options"));
+    var list = el("ul", "bb-brief__list");
+    (brief.options || []).forEach(function (o) {
+      list.appendChild(el("li", "bb-brief__opt", briefText(o.label) + " - " + briefText(o.consequence)));
+    });
+    optSec.appendChild(list);
+    full.appendChild(optSec);
+    if (brief.recommend_reason) full.appendChild(briefSec("recommendation", briefRecommendation(brief, item), "bb-brief__v--rec"));
+    if (brief.report) full.appendChild(briefSec("evidence", briefText(brief.report)));
+
+    var me = el("button", "bb-brief__me", "Brief me");
+    me.type = "button";
+    me.setAttribute("aria-expanded", "false");
+    me.addEventListener("click", function () {
+      full.hidden = !full.hidden;
+      me.setAttribute("aria-expanded", full.hidden ? "false" : "true");
+      me.textContent = full.hidden ? "Brief me" : "Hide brief";
+    });
+    box.appendChild(me);
+    box.appendChild(full);
+    return box;
+  }
+
   data.captains_call.forEach(function (item) {
+    var brief = item.type !== "merge" && item.brief && typeof item.brief === "object" ? item.brief : null;
+    var consequences = {};
+    if (brief) (brief.options || []).forEach(function (o) {
+      if (o && typeof o.value === "string" && o.consequence) consequences[o.value] = briefText(o.consequence);
+    });
     var card = el("div", "fm-card fm-card--poster bb-decision");
     var pad = el("div", "bb-decision__pad");
 
@@ -509,10 +587,14 @@ __FM_BEARINGS_BOARD_DATA__
       }
     } else {
       /* the rec marker on the option itself carries the recommendation */
-      var ctx = el("div", "bb-ctx");
-      if (item.about) ctx.appendChild(ctxRow("about", item.about));
-      if (item.decide) ctx.appendChild(ctxRow("decide", item.decide));
-      pad.appendChild(ctx);
+      if (brief) {
+        pad.appendChild(briefSections(brief, item));
+      } else {
+        var ctx = el("div", "bb-ctx");
+        if (item.about) ctx.appendChild(ctxRow("about", item.about));
+        if (item.decide) ctx.appendChild(ctxRow("decide", item.decide));
+        pad.appendChild(ctx);
+      }
     }
 
     var form = document.createElement("form");
@@ -525,7 +607,8 @@ __FM_BEARINGS_BOARD_DATA__
       lab.appendChild(input);
       var body = el("span", "bb-opt__body");
       body.appendChild(el("span", "bb-opt__label", o.label));
-      if (o.hint) body.appendChild(el("span", "bb-opt__hint", o.hint));
+      var optLine = consequences[o.value] || o.hint;
+      if (optLine) body.appendChild(el("span", "bb-opt__hint", optLine));
       lab.appendChild(body);
       if (item.recommend_value && o.value === item.recommend_value) {
         lab.appendChild(el("span", "bb-opt__rec", "rec"));

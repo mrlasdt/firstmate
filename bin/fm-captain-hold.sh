@@ -21,7 +21,9 @@
 #
 # Usage:
 #   fm-captain-hold.sh hold <task-id> --reason <reason> \
-#     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD]
+#     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD] \
+#     [--brief-file <path>]
+#   fm-captain-hold.sh brief <task-id> [--json]
 #   fm-captain-hold.sh answer <task-id> --decision-file <path> [--release]
 #   fm-captain-hold.sh answers [<legacy-origin> | --any-origin] --source <provenance>   (keyed answers on stdin)
 #   fm-captain-hold.sh reconcile-requests --source-id <source-id> --source <provenance>   (task ids on stdin)
@@ -56,6 +58,18 @@
 # `--until` records the captain's own deferral date through `tasks-axi hold
 # --until`, so a "revisit later" answer is stored as a date instead of a live
 # card.
+#
+# `--brief-file` attaches the decision's full write-up (question, why it
+# matters, background, each option with its consequence, the recommendation and
+# its reason) as a JSON file whose fields bin/fm-decision-brief-lib.sh owns. It
+# is validated and stored durably beside the data directory as
+# captain-briefs/<task-id>.json before the task is held (an invalid write-up is
+# refused before anything changes, and a held task never lacks its write-up), and holding again with the same file is a
+# no-op while a different file replaces the stored write-up. A hold without
+# `--brief-file` is unchanged and never touches a stored write-up. `brief`
+# prints the stored write-up as plain text, or as its normalized JSON with
+# `--json`, and exits 1 when the task has none. Every surface that presents the
+# call (the bearings board, /ahoy, chat) shows this one record.
 #
 # `answer` records the captain's exact words and resolves the call in the same
 # act. It requires a non-empty captain decision file of at most 8192 bytes and
@@ -240,6 +254,9 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 # shellcheck source=bin/fm-parent-channel-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
+# shellcheck source=bin/fm-decision-brief-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-decision-brief-lib.sh"
 
 PARENT_HOLD_PUBLISHED=0
 publish_parent_hold() {  # <task-id> <occurrence> <verb> <note>
@@ -1050,6 +1067,7 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
 command_hold() {
   local id=${1:-} title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
   local existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason previous_origin='' hold_status=0
+  local brief_file=''
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -1059,6 +1077,7 @@ command_hold() {
       --repo) shift; repo=${1:-} ;;
       --origin) shift; origin=${1:-} ;;
       --until) shift; until=${1:-} ;;
+      --brief-file) shift; brief_file=${1:-} ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
@@ -1081,6 +1100,8 @@ command_hold() {
     [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) : ;;
     *) fail "FM_CAPTAIN_HOLD_NOW must be a UTC YYYY-MM-DDTHH:MM:SSZ timestamp" ;;
   esac
+  [ -z "$brief_file" ] || [ -n "$(fm_decision_brief_normalize "$brief_file")" ] \
+    || fail "--brief-file is not a valid decision write-up: $brief_file"
   acquire_task_control_lock "$id"
   require_tasks_axi
   if task_show "$id"; then
@@ -1119,6 +1140,12 @@ command_hold() {
         || fail "could not create task $id"
     fi
   fi
+  # The write-up lands before the hold becomes visible, so no surface can show
+  # the call without it. Storing is idempotent for an identical write-up.
+  if [ -n "$brief_file" ]; then
+    fm_decision_brief_store "$DATA" "$id" "$brief_file" \
+      || fail "could not store the decision write-up for task $id"
+  fi
   # Publish the timestamp before the captain-hold annotation. A concurrent
   # snapshot may see the harmless stamp by itself, but can never see a newly
   # held task without the timestamp that defines this hold lifecycle's age.
@@ -1156,6 +1183,27 @@ command_hold() {
     || fail "task $id lost its hold-set stamp while being held"
   publish_parent_hold "$id" "$occurrence" needs-decision "$reason"
   printf '%s\n' "$id"
+}
+
+command_brief() {  # <task-id> [--json]
+  local id=${1:-} json=0 record
+  [ "$#" -ge 1 ] || { usage >&2; exit 2; }
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json) json=1 ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  validate_slug task-id "$id"
+  record=$(fm_decision_brief_read "$DATA" "$id") \
+    || { printf 'fm-captain-hold: task %s has no stored decision write-up\n' "$id" >&2; exit 1; }
+  if [ "$json" = 1 ]; then
+    printf '%s\n' "$record"
+  else
+    printf '%s\n' "$record" | fm_decision_brief_render
+  fi
 }
 
 # Record a resolution block beneath any leading active hold-set stamp,
@@ -2187,6 +2235,7 @@ command_open() {  # <task-id> [--identity] [--distinguish-absent]
 
 case "${1:-}" in
   hold) shift; command_hold "$@" ;;
+  brief) shift; command_brief "$@" ;;
   answer) shift; command_answer "$@" ;;
   answers) shift; command_answers "$@" ;;
   reconcile-requests) shift; command_reconcile_requests "$@" ;;

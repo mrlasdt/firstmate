@@ -5,7 +5,10 @@
 // Usage: node board-render-harness.mjs <built-board.html>
 // Prints one JSON document:
 //   { stats:[{n,label}], underway:[{title,sub,badges}],
-//     charted:[{title,sub,badges,pickable}], empty, more, error }
+//     charted:[{title,sub,badges,pickable}], empty, more, error,
+//     cards:[{title, sections:[{k,v}], options:[{label,hint,rec}],
+//             briefMe:null|{label, before:{hidden,expanded}, after:{hidden,expanded,label},
+//                           full:[{k,v}], fullOptions:[text]}]} }
 import { readFileSync } from "node:fs";
 
 const html = readFileSync(process.argv[2], "utf8");
@@ -27,6 +30,14 @@ class Node {
     this.classList = {
       add: (c) => { this.className = (this.className + " " + c).trim(); },
       contains: (c) => this.className.split(/\s+/).includes(c),
+      remove: (c) => { this.className = this.className.split(/\s+/).filter((x) => x && x !== c).join(" "); },
+      toggle: (c, force) => {
+        const has = this.className.split(/\s+/).includes(c);
+        const want = force === undefined ? !has : !!force;
+        if (want && !has) this.className = (this.className + " " + c).trim();
+        if (!want && has) this.className = this.className.split(/\s+/).filter((x) => x && x !== c).join(" ");
+        return want;
+      },
     };
   }
   get textContent() {
@@ -37,7 +48,8 @@ class Node {
   set textContent(v) { this._text = String(v); this.children = []; }
   appendChild(n) { n.parentNode = this; this.children.push(n); return n; }
   setAttribute(k, v) { this.attributes[k] = v; }
-  addEventListener() {}
+  addEventListener(type, fn) { (this.handlers ||= {})[type] = fn; }
+  click() { this.handlers?.click?.(); }
   querySelectorAll(sel) {
     const want = sel.replace(/^\./, "").replace(/:checked$/, "");
     const checkedOnly = sel.endsWith(":checked");
@@ -122,5 +134,46 @@ const errorText = [...byId.entries()]
 const empty = ch.children.filter((c) => c.className.includes("bb-empty")).map((c) => c.textContent);
 const more = ch.children.filter((c) => c.className.includes("bb-morechip")).map((c) => c.textContent);
 
+// Captain's Call cards: the title, the decision write-up sections, each option
+// with its one-line hint/consequence, and the "brief me" control exercised by a
+// real click so the expandable full view is asserted as rendered, not as source.
+const classOf = (n) => n.className.split(/\s+/);
+const firstWith = (n, cls) => n.querySelectorAll("." + cls)[0];
+const secsOf = (box) =>
+  box.children.filter((c) => classOf(c).includes("bb-brief__sec")).map((sec) => ({
+    k: firstWith(sec, "bb-brief__k")?.textContent ?? "",
+    v: firstWith(sec, "bb-brief__v")?.textContent ?? "",
+  }));
+const callNode = byId.get("bb-call") || new Node("div");
+const cards = callNode.children
+  .filter((c) => classOf(c).includes("bb-decision"))
+  .map((card) => {
+    const brief = firstWith(card, "bb-brief");
+    const me = firstWith(card, "bb-brief__me");
+    const full = firstWith(card, "bb-brief__full");
+    let briefMe = null;
+    if (me && full) {
+      const state = () => ({ hidden: full.hidden, expanded: me.attributes["aria-expanded"], label: me.textContent });
+      const before = state();
+      me.click();
+      const after = state();
+      briefMe = {
+        before, after,
+        full: secsOf(full),
+        fullOptions: full.querySelectorAll("bb-brief__opt").map((o) => o.textContent),
+      };
+    }
+    return {
+      title: firstWith(card, "bb-decision__title")?.textContent ?? "",
+      sections: brief ? secsOf(brief) : [],
+      options: card.querySelectorAll("bb-opt").map((o) => ({
+        label: firstWith(o, "bb-opt__label")?.textContent ?? "",
+        hint: firstWith(o, "bb-opt__hint")?.textContent ?? "",
+        rec: !!firstWith(o, "bb-opt__rec"),
+      })),
+      briefMe,
+    };
+  });
+
 process.stdout.write(
-  JSON.stringify({ stats, underway, charted, empty, more, error: errorText }) + "\n");
+  JSON.stringify({ stats, underway, charted, empty, more, error: errorText, cards }) + "\n");

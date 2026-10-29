@@ -4481,6 +4481,117 @@ SH
 # tasks-axi refuses parentheses and line breaks in a hold reason and stores the
 # rest on one markdown line. The reason is encoded where it is written and
 # decoded wherever it is shown, so prose with every awkward character survives.
+write_brief() {  # <path> [question]
+  jq -n --arg question "${2:-Ship the release today?}" '{
+    question: $question,
+    why_it_matters: "The release is blocking two customers.\nA wrong call costs a week.",
+    background: "The fix landed Tuesday.\n\nQA signed off on staging.",
+    options: [
+      {value: "ship", label: "Ship today", consequence: "Customers unblocked now; rollback is manual."},
+      {value: "wait", label: "Wait a week", consequence: "Safer, but both customers stay blocked."}
+    ],
+    recommend_value: "ship",
+    recommend_reason: "Staging is clean and the rollback is rehearsed.",
+    asked: "2026-07-14",
+    report: "data/sample/report.md"
+  }' > "$1"
+}
+
+test_hold_write_up_round_trips_and_surfaces() {
+  local home brief stored before out json
+  home=$(make_home hold-write-up)
+  brief="$home/brief.json"
+  write_brief "$brief"
+
+  run_captain "$home" hold sample-briefed --title "Ship the release" --reason "captain must decide" \
+    --repo sample --brief-file "$brief" >/dev/null || fail "could not hold with a write-up"
+  stored="$home/data/captain-briefs/sample-briefed.json"
+  assert_present "$stored" "write-up was not stored with the hold"
+
+  json=$(run_captain "$home" brief sample-briefed --json) || fail "brief --json failed"
+  assert_equals "fm-captain-brief.v1" "$(printf '%s' "$json" | jq -r .schema)" "stored schema"
+  assert_equals "wait" "$(printf '%s' "$json" | jq -r '.options[1].value')" "stored option order"
+  assert_equals "ship" "$(printf '%s' "$json" | jq -r .recommend_value)" "stored recommendation"
+
+  out=$(run_captain "$home" brief sample-briefed) || fail "brief text failed"
+  assert_contains "$out" "Why it matters" "text brief lacks the why section"
+  assert_contains "$out" "- Wait a week [wait]: Safer, but both customers stay blocked." "text brief lacks the option consequence"
+  assert_contains "$out" "ship: Staging is clean" "text brief lacks the recommendation reason"
+
+  # Re-holding with the same write-up is a no-op; a changed one replaces it.
+  before=$(cksum < "$stored")
+  run_captain "$home" hold sample-briefed --reason "captain must decide" --brief-file "$brief" >/dev/null \
+    || fail "idempotent re-hold failed"
+  assert_equals "$before" "$(cksum < "$stored")" "identical re-hold rewrote the write-up"
+  write_brief "$brief" "Ship the release tomorrow?"
+  run_captain "$home" hold sample-briefed --reason "captain must decide" --brief-file "$brief" >/dev/null \
+    || fail "re-hold with a changed write-up failed"
+  assert_equals "Ship the release tomorrow?" "$(run_captain "$home" brief sample-briefed --json | jq -r .question)" \
+    "changed write-up did not replace the stored one"
+
+  # Surfaced by the bearings snapshot for the open decision only.
+  json=$(run_bearings "$home") || fail "bearings snapshot failed"
+  assert_equals "sample-briefed" "$(printf '%s' "$json" | jq -r '.decision_briefs[0].id')" "snapshot lacks the decision write-up pointer"
+  assert_equals "Ship the release tomorrow?" "$(printf '%s' "$json" | jq -r '.decision_briefs[0].question')" "snapshot pointer question"
+  assert_equals "null" "$(printf '%s' "$json" | jq -r '.decision_briefs[0].brief')" "full write-up must be opt-in"
+  json=$(run_bearings "$home" --fields briefs) || fail "bearings snapshot --fields briefs failed"
+  assert_equals "wait" "$(printf '%s' "$json" | jq -r '.decision_briefs[0].brief.options[1].value')" "full write-up not exposed"
+  out=$(PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_BEARINGS_NOW=2026-07-14T12:00:00Z "$BEARINGS")
+  assert_contains "$out" "decision_briefs[1]{id,path,question}:" "TOON snapshot lacks the write-up section"
+
+  # Answering closes the call; the snapshot stops surfacing its write-up.
+  printf 'ship it\n' > "$home/decision.txt"
+  run_captain "$home" answer sample-briefed --decision-file "$home/decision.txt" >/dev/null || fail "answer failed"
+  json=$(run_bearings "$home") || fail "bearings snapshot after answer failed"
+  assert_equals "false" "$(printf '%s' "$json" | jq 'has("decision_briefs")')" "closed call still surfaces its write-up"
+  pass "a hold write-up round-trips through the store, the brief reader, and the bearings snapshot"
+}
+
+test_hold_without_write_up_is_unchanged() {
+  local home json out rc=0
+  home=$(make_home hold-no-write-up)
+  run_captain "$home" hold sample-plain --title "Plain call" --reason "captain must decide" --repo sample >/dev/null \
+    || fail "plain hold failed"
+  assert_absent "$home/data/captain-briefs" "a hold without a write-up created a write-up store"
+  run_captain "$home" brief sample-plain >/dev/null 2>&1 || rc=$?
+  assert_equals "1" "$rc" "brief on a hold without a write-up must exit 1"
+  json=$(run_bearings "$home") || fail "bearings snapshot failed"
+  assert_equals "false" "$(printf '%s' "$json" | jq 'has("decision_briefs")')" "fleet without write-ups gained a section"
+  assert_equals "sample-plain" "$(printf '%s' "$json" | jq -r '.decisions_open[0].id')" "plain decision no longer listed"
+  out=$(PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_BEARINGS_NOW=2026-07-14T12:00:00Z "$BEARINGS")
+  assert_not_contains "$out" "decision_briefs" "TOON snapshot gained a write-up section"
+  pass "a hold without a write-up behaves exactly as before"
+}
+
+test_invalid_write_up_refuses_the_hold_untouched() {
+  local home brief rc
+  home=$(make_home hold-bad-write-up)
+  brief="$home/brief.json"
+  write_brief "$brief"
+  jq '.recommend_value = "missing"' "$brief" > "$brief.bad" && mv "$brief.bad" "$brief"
+  rc=0
+  run_captain "$home" hold sample-bad --title "Bad" --reason "captain must decide" --repo sample \
+    --brief-file "$brief" >/dev/null 2>&1 || rc=$?
+  assert_not_equals "0" "$rc" "a write-up recommending an unknown option was accepted"
+  assert_absent "$home/data/captain-briefs/sample-bad.json" "a refused write-up was stored"
+  if tasks_in "$home" show sample-bad >/dev/null 2>&1; then
+    fail "a refused write-up still created the task"
+  fi
+  for field in question why_it_matters background recommend_reason options; do
+    write_brief "$brief"
+    jq "del(.$field)" "$brief" > "$brief.bad" && mv "$brief.bad" "$brief"
+    rc=0
+    run_captain "$home" hold sample-bad --title "Bad" --reason "r" --repo sample --brief-file "$brief" >/dev/null 2>&1 || rc=$?
+    assert_not_equals "0" "$rc" "a write-up missing $field was accepted"
+  done
+  write_brief "$brief"
+  jq '.options[0].value = "reconcile"' "$brief" > "$brief.bad" && mv "$brief.bad" "$brief"
+  rc=0
+  run_captain "$home" hold sample-bad --title "Bad" --reason "r" --repo sample --brief-file "$brief" >/dev/null 2>&1 || rc=$?
+  assert_not_equals "0" "$rc" "a write-up authoring the reserved reconcile option was accepted"
+  pass "an invalid write-up refuses the hold before anything changes"
+}
+
 test_hold_reason_round_trips_awkward_characters() {
   local home id reason stored json shown start verb fields out raw rc raw_rc mode
   local title legacy body quoted_reason quoted_title quoted_legacy expected_reason until_args=()
@@ -4767,6 +4878,9 @@ EOF
   pass "an answered captain call archived to a user-configured location still satisfies the completion gate"
 }
 
+test_hold_write_up_round_trips_and_surfaces
+test_hold_without_write_up_is_unchanged
+test_invalid_write_up_refuses_the_hold_untouched
 test_hold_reason_round_trips_awkward_characters
 test_hold_origins_precede_backend_holds
 test_historical_self_inventory_has_workable_repair

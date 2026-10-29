@@ -266,6 +266,91 @@ test_charted_rows_without_a_filed_date_follow_the_dated_rows_in_payload_order() 
   pass "charted rows with no filed date follow the dated rows in payload order"
 }
 
+# Build a board whose Captain's Call is <calls-json> and return what rendered.
+render_calls() {  # <home> <captains-call-json>
+  local home=$1 calls=$2 data="$1/payload.json"
+  jq -n --argjson calls "$calls" '{
+    schema:"fm-bearings-board.v1", home:"render-home", generated:"2026-08-26T00:00Z",
+    prs_live:false, captains_call:$calls, underway:[], landed:[], charted:[]}' > "$data"
+  PATH="$home/fakebin:$PATH" FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROCEVENT_CLAIM_ROOT="$home/procevent-claims" \
+    LAVISH_AXI_STATE_DIR="$home/lavish-state" \
+    "$BOARD" build "$data" >/dev/null 2>&1 || fail "the board did not build"
+  require_listener_reached_poll "$home"
+  node "$HARNESS" "$home/.lavish/bearings-board.html" \
+    || fail "the built board could not be rendered"
+}
+
+BRIEF_JSON='{
+  "question":"Ship the release today?",
+  "why_it_matters":"The release blocks two customers.\nA wrong call costs a week.",
+  "background":"The fix landed Tuesday.\n\nQA signed off on staging.",
+  "options":[
+    {"value":"ship","label":"Ship today","consequence":"Customers unblocked now; rollback is manual."},
+    {"value":"wait","label":"Wait a week","consequence":"Safer, but both customers stay blocked."}],
+  "recommend_value":"ship",
+  "recommend_reason":"Staging is clean and the rollback is rehearsed.",
+  "asked":"2026-07-14","report":"data/sample/report.md"}'
+
+BRIEFED_CARD='{"key":"sample-release","type":"decision","repo":"sample","title":"Release timing",
+  "about":"old one-line about","decide":"old one-line decide",
+  "options":[{"value":"ship","label":"Ship today","hint":"old hint"},
+             {"value":"wait","label":"Wait a week","hint":"old hint two"}],
+  "recommend_value":"ship"}'
+
+assert_briefed_card() {  # <render-json> <why>
+  printf '%s' "$1" | jq -e '
+    .error == "" and (.cards | length) == 1
+    and (.cards[0] | .title == "Release timing"
+      and ([.sections[].k] == ["why it matters", "background", "recommendation"])
+      and (.sections[0].v | test("blocks two customers.\nA wrong call"))
+      and (.sections[1].v | test("Tuesday.\n\nQA signed off"))
+      and (.sections[2].v == "Ship today: Staging is clean and the rollback is rehearsed.")
+      and (.options[0] | .label == "Ship today" and .hint == "Customers unblocked now; rollback is manual." and .rec == true)
+      and (.options[1] | .hint == "Safer, but both customers stay blocked." and .rec == false)
+      and (.options[2].label == "Reconcile" and (.options[2].hint | test("Re-check")))
+      and (.briefMe.before == {"hidden":true,"expanded":"false","label":"Brief me"})
+      and (.briefMe.after == {"hidden":false,"expanded":"true","label":"Hide brief"})
+      and ([.briefMe.full[].k] == ["decision","raised","why it matters","background","options","recommendation","evidence"])
+      and (.briefMe.full[0].v == "Ship the release today?")
+      and (.briefMe.fullOptions == ["Ship today - Customers unblocked now; rollback is manual.", "Wait a week - Safer, but both customers stay blocked."])
+      and (.briefMe.full[6].v == "data/sample/report.md"))
+  ' >/dev/null || fail "$2: $1"
+}
+
+test_a_decision_card_renders_its_write_up_as_sections_with_a_brief_me_view() {
+  local home out card
+  home=$(make_home card-write-up)
+  card=$(jq -c --argjson brief "$BRIEF_JSON" '. + {brief:$brief}' <<< "$BRIEFED_CARD")
+  out=$(render_calls "$home" "[$card]")
+  assert_briefed_card "$out" "a card carrying a write-up did not render its sections, option consequences, and brief-me view"
+  pass "a decision card renders why/background/recommendation, per-option consequences, and an expandable brief me view"
+}
+
+test_the_stored_write_up_fills_a_card_that_carries_none() {
+  local home out
+  home=$(make_home card-stored-write-up)
+  mkdir -p "$home/data/captain-briefs"
+  printf '%s' "$BRIEF_JSON" > "$home/data/captain-briefs/sample-release.json"
+  out=$(render_calls "$home" "[$BRIEFED_CARD]")
+  assert_briefed_card "$out" "the stored write-up did not reach its card"
+  pass "build fills a decision card from the write-up stored with its hold"
+}
+
+test_a_card_without_a_write_up_renders_as_before() {
+  local home out
+  home=$(make_home card-no-write-up)
+  out=$(render_calls "$home" "[$BRIEFED_CARD]")
+  printf '%s' "$out" | jq -e '
+    .error == "" and (.cards | length) == 1
+    and (.cards[0].sections == [])
+    and (.cards[0].briefMe == null)
+    and (.cards[0].options[0] | .hint == "old hint" and .rec == true)
+  ' >/dev/null || fail "a card with no write-up changed: $out"
+  pass "a decision card with no write-up renders exactly as before"
+}
+
 test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status
 test_an_underway_identifier_label_is_not_replaced_by_run_status
 test_charted_next_reads_newest_filed_first
@@ -275,3 +360,6 @@ test_warnings_are_excluded_from_the_charted_next_count
 test_a_board_of_only_warnings_still_reports_nothing_queued
 test_omitted_warnings_never_count_as_more_queued
 test_an_omitted_kind_keeps_the_existing_queued_rendering
+test_a_decision_card_renders_its_write_up_as_sections_with_a_brief_me_view
+test_the_stored_write_up_fills_a_card_that_carries_none
+test_a_card_without_a_write_up_renders_as_before

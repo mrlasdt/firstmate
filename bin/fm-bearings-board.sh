@@ -54,6 +54,17 @@
 # hidden is worse than a card wrongly shown. Cleanup is therefore a normal
 # rebuild effect rather than a committed migration or direct state mutation.
 #
+# DECISION WRITE-UPS. A decision card MAY carry `brief`, the full write-up of the
+# call (question, why it matters, background, each option's consequence, the
+# recommendation and its reason), in the shape bin/fm-decision-brief-lib.sh owns;
+# the template renders it as readable sections plus an expandable "brief me"
+# view, and a card without one renders as before. The write-up is stored with the
+# hold (`fm-captain-hold.sh hold --brief-file`), so build fills each surviving
+# decision card from that stored record by task id, replacing any copy the
+# composer attached: every surface shows the one record, and the composer need
+# not carry it. A card with no stored write-up keeps whatever valid `brief` the
+# payload gave it. Only `decision` cards carry one.
+#
 # THE RECONCILE CHOICE. Every decision card carries the standard `reconcile`
 # option, injected here so the guarantee does not depend on the composer's
 # memory, and the payload validator reserves that value across every card type.
@@ -91,6 +102,11 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-$FM_ROOT}"
+DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+
+# shellcheck source=bin/fm-decision-brief-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-decision-brief-lib.sh"
 
 TEMPLATE="${FM_BEARINGS_BOARD_TEMPLATE:-$SCRIPT_DIR/../.agents/skills/bearings/assets/board-template.html}"
 PLACEHOLDER='__FM_BEARINGS_BOARD_DATA__'
@@ -112,7 +128,7 @@ fail() {
 board_path() { printf '%s/.lavish/bearings-board.html\n' "$FM_HOME"; }
 
 validate_payload() {  # <data.json>
-  jq -e --arg schema "$BOARD_SCHEMA" '
+  jq -e --arg schema "$BOARD_SCHEMA" "$FM_DECISION_BRIEF_JQ_DEFS"'
     def nonempty_string: type == "string" and length > 0;
     def slug($max): type == "string" and test("^[A-Za-z0-9._-]{1," + ($max | tostring) + "}$");
     def repo_marker: has("repo") and (.repo == null or (.repo | type == "string"));
@@ -160,6 +176,7 @@ validate_payload() {  # <data.json>
       and (optional_https_url("pr_url"))
       and optional_subject
       and (if has("subject") then .type == "decision" else true end)
+      and ((has("brief") | not) or (.brief == null) or (.type == "decision" and (.brief | brief_valid)))
       and (optional_string("freeform_hint"))
       and ((has("close") | not) or (.close == "done" or .close == "release"))
       and ((has("allow_freeform") | not) or (.allow_freeform | type == "boolean"))
@@ -289,12 +306,23 @@ decision_card_is_stale() {  # <task-id> <landed-0-or-1>
   return 1
 }
 
+# The stored write-up of every decision card in the payload, keyed by task id.
+stored_briefs() {  # <data.json>
+  local key brief out='{}'
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    brief=$(fm_decision_brief_read "$DATA" "$key") || continue
+    out=$(jq -c --arg key "$key" --argjson brief "$brief" '. + {($key): $brief}' <<< "$out") || return 1
+  done < <(jq -r '.captains_call[]? | select(.type == "decision") | .key' "$1")
+  printf '%s\n' "$out"
+}
+
 # Drop every stale decision card, then give every surviving decision card the
 # standard reconcile choice. Injecting it here is what makes "every decision
 # card offers reconcile" a property of the board rather than of the composer's
 # memory; the validator prevents duplicate decision options.
 effective_payload() {  # <data.json> <dest.json>
-  local data=$1 dest=$2 landed_keys key reason drop='' tmp landed=0
+  local data=$1 dest=$2 landed_keys key reason drop='' tmp landed=0 briefs
   landed_keys=$(jq -c '
     def version_parts: split(".") | map(tonumber);
     . as $payload
@@ -322,11 +350,13 @@ effective_payload() {  # <data.json> <dest.json>
     drop=$drop$key$'\n'
   done < <(jq -r '.captains_call[]? | select(.type == "decision") | .key' "$data")
   tmp=$(printf '%s' "$drop" | jq -R -s 'split("\n") | map(select(length > 0))') || return 1
-  jq --argjson dropped "$tmp" '
+  briefs=$(stored_briefs "$data") || return 1
+  jq --argjson dropped "$tmp" --argjson briefs "$briefs" '
     .captains_call = [
       .captains_call[]
       | . as $card
       | select($card.type != "decision" or (($dropped | index($card.key)) == null))
+      | if .type == "decision" and ($briefs[.key] != null) then .brief = $briefs[.key] else . end
       | if .type == "decision"
         then .options += [{
           value: "reconcile",

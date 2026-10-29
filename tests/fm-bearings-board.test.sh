@@ -188,6 +188,98 @@ extract_payload() {  # <board-path>
     | sed '1d;$d'
 }
 
+write_brief_json() {  # <path>
+  cat > "$1" <<'EOF'
+{
+  "question": "Adopt perishable-first admission?",
+  "why_it_matters": "Admission order decides which orders spoil.",
+  "background": "Today the queue is first come, first served.",
+  "options": [
+    { "value": "yes", "label": "Adopt", "consequence": "Perishables jump the queue." },
+    { "value": "no", "label": "Keep current", "consequence": "Nothing changes." }
+  ],
+  "recommend_value": "yes",
+  "recommend_reason": "Spoilage is the costliest failure.",
+  "asked": "2026-08-19"
+}
+EOF
+}
+
+test_build_validates_and_injects_decision_write_ups() {
+  local home data board brief key
+  key=sample-instruction-layer-refinement-review-decision-perishable-first-admission-choice
+  home=$(make_home write-up)
+  data="$home/payload.json"
+  board="$home/.lavish/bearings-board.html"
+  brief="$home/brief.json"
+  write_valid_payload "$data"
+  write_brief_json "$brief"
+
+  # A composer-supplied valid write-up passes through to the page.
+  jq --slurpfile brief "$brief" '.captains_call[0].brief = $brief[0]' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  run_board "$home" build "$data" >/dev/null || fail "a valid write-up was refused"
+  extract_payload "$board" | jq -e '.captains_call[0].brief.recommend_reason == "Spoilage is the costliest failure."' >/dev/null \
+    || fail "the composer's write-up did not reach the page"
+
+  # A stored write-up replaces the composer's copy: one record feeds every surface.
+  mkdir -p "$home/data/captain-briefs"
+  jq '.question = "Stored question"' "$brief" > "$home/data/captain-briefs/$key.json"
+  run_board "$home" build "$data" >/dev/null || fail "the stored write-up build failed"
+  extract_payload "$board" | jq -e '.captains_call[0].brief.question == "Stored question"' >/dev/null \
+    || fail "the stored write-up did not replace the composer's copy"
+  extract_payload "$board" | jq -e '.captains_call[1] | has("brief") | not' >/dev/null \
+    || fail "a merge card gained a write-up"
+  pass "build validates a card write-up and fills it from the stored record"
+}
+
+test_build_refuses_malformed_write_ups() {
+  local home data brief filter
+  home=$(make_home write-up-bad)
+  data="$home/payload.json"
+  brief="$home/brief.json"
+  write_brief_json "$brief"
+  for filter in \
+    'del(.why_it_matters)' \
+    'del(.options)' \
+    '.options = []' \
+    '.recommend_value = "elsewhere"' \
+    '.options[0].value = "reconcile"' \
+    '.options[1].value = .options[0].value' \
+    '.options[0].consequence = ""' \
+    '.asked = "2026-02-31"' \
+    '. + {unexpected: "field"}' \
+    '.background = 7'; do
+    write_valid_payload "$data"
+    jq "$filter" "$brief" > "$brief.bad"
+    jq --slurpfile bad "$brief.bad" '.captains_call[0].brief = $bad[0]' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+    if run_board "$home" build "$data" >/dev/null 2>&1; then
+      fail "a malformed write-up ($filter) was accepted"
+    fi
+    assert_absent "$home/.lavish/bearings-board.html" "a refused write-up still produced a board ($filter)"
+  done
+  # A write-up on a merge card is refused too: only decisions carry one.
+  write_valid_payload "$data"
+  jq --slurpfile brief "$brief" '.captains_call[1].brief = $brief[0]' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  if run_board "$home" build "$data" >/dev/null 2>&1; then
+    fail "a merge card carrying a write-up was accepted"
+  fi
+  pass "build refuses malformed write-ups and write-ups on non-decision cards"
+}
+
+test_payloads_without_write_ups_still_build() {
+  local home data board
+  home=$(make_home write-up-absent)
+  data="$home/payload.json"
+  board="$home/.lavish/bearings-board.html"
+  write_valid_payload "$data"
+  run_board "$home" build "$data" >/dev/null || fail "a payload with no write-up was refused"
+  extract_payload "$board" | jq -e '[.captains_call[] | has("brief")] | any | not' >/dev/null \
+    || fail "a card without a stored write-up gained one"
+  jq '.captains_call[0].brief = null' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  run_board "$home" build "$data" >/dev/null || fail "a null write-up was refused"
+  pass "payloads without write-ups (absent or null) build exactly as before"
+}
+
 test_path_is_stable_and_home_scoped() {
   local home
   home=$(make_home path)
@@ -787,3 +879,6 @@ test_build_fails_when_reconcile_cannot_establish_a_listener
 test_every_decision_card_carries_the_reconcile_choice
 test_build_refuses_a_payload_that_occupies_the_reconcile_value
 test_build_refuses_a_nondecision_reconcile_value
+test_build_validates_and_injects_decision_write_ups
+test_build_refuses_malformed_write_ups
+test_payloads_without_write_ups_still_build
