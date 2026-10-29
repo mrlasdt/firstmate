@@ -153,6 +153,9 @@ a { color: inherit; text-decoration: none; }
 
 .bb-section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .bb-section__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+/* the muted caption wraps and right-aligns instead of running off a narrow screen */
+.bb-section__head > .fm-sign--eyebrow { flex: none; }
+.bb-section__head > .fm-sign--muted { white-space: normal; text-align: right; line-height: 1.3; min-width: 0; }
 .bb-cols { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 22px; }
 
 /* ---- Captain's Call: one card at a time, dealt off a visible stack ---- */
@@ -203,6 +206,7 @@ a { color: inherit; text-decoration: none; }
 /* decision write-up: labelled sections, line breaks kept, and the "brief me" full view */
 .bb-brief { display: flex; flex-direction: column; gap: 10px; }
 .bb-brief__sec { display: flex; flex-direction: column; gap: 3px; }
+.bb-brief__sec[hidden] { display: none; }
 .bb-brief__k { font-family: var(--font-mono); font-size: var(--fs-2xs); letter-spacing: 0.04em;
   text-transform: uppercase; color: var(--text-faint); }
 .bb-brief__v { margin: 0; font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.45;
@@ -523,9 +527,13 @@ __FM_BEARINGS_BOARD_DATA__
   }
   function briefSections(brief, item) {
     var box = el("div", "bb-brief");
-    if (brief.why_it_matters) box.appendChild(briefSec("why it matters", briefText(brief.why_it_matters)));
-    if (brief.background) box.appendChild(briefSec("background", briefText(brief.background)));
-    if (brief.recommend_reason) box.appendChild(briefSec("recommendation", briefRecommendation(brief, item), "bb-brief__v--rec"));
+    /* the inline sections give way to the full view while it is open, so
+       expanding never stacks a second copy of the same text under the first */
+    var inline = [];
+    function addInline(sec) { inline.push(sec); box.appendChild(sec); }
+    if (brief.why_it_matters) addInline(briefSec("why it matters", briefText(brief.why_it_matters)));
+    if (brief.background) addInline(briefSec("background", briefText(brief.background)));
+    if (brief.recommend_reason) addInline(briefSec("recommendation", briefRecommendation(brief, item), "bb-brief__v--rec"));
 
     var full = el("div", "bb-brief__full");
     full.hidden = true;
@@ -549,6 +557,7 @@ __FM_BEARINGS_BOARD_DATA__
     me.setAttribute("aria-expanded", "false");
     me.addEventListener("click", function () {
       full.hidden = !full.hidden;
+      inline.forEach(function (sec) { sec.hidden = !full.hidden; });
       me.setAttribute("aria-expanded", full.hidden ? "false" : "true");
       me.textContent = full.hidden ? "Brief me" : "Hide brief";
     });

@@ -7,7 +7,7 @@
 //   { stats:[{n,label}], underway:[{title,sub,badges}],
 //     charted:[{title,sub,badges,pickable}], empty, more, error,
 //     cards:[{title, sections:[{k,v}], options:[{label,hint,rec}],
-//             briefMe:null|{label, before:{hidden,expanded}, after:{hidden,expanded,label},
+//             briefMe:null|{label, before:{hidden,expanded,label,inlineHidden}, after:{...same},
 //                           full:[{k,v}], fullOptions:[text]}]} }
 import { readFileSync } from "node:fs";
 
@@ -153,7 +153,9 @@ const cards = callNode.children
     const full = firstWith(card, "bb-brief__full");
     let briefMe = null;
     if (me && full) {
-      const state = () => ({ hidden: full.hidden, expanded: me.attributes["aria-expanded"], label: me.textContent });
+      const inline = brief.children.filter((c) => classOf(c).includes("bb-brief__sec"));
+      const state = () => ({ hidden: full.hidden, expanded: me.attributes["aria-expanded"], label: me.textContent,
+                             inlineHidden: inline.map((s) => s.hidden) });
       const before = state();
       me.click();
       const after = state();
