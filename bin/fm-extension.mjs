@@ -687,7 +687,9 @@ async function installPackage(home, sourceInfo) {
       fail("integrity-mismatch", "package changed while it was copied into the managed store");
     }
     try {
+      await chmod(temporary, 0o755);
       await rename(temporary, destination);
+      await chmod(destination, 0o555);
       return { packageInfo: await validatePackage(destination, { installed: true }) };
     } catch (error) {
       if (!error || !["EEXIST", "ENOTEMPTY"].includes(error.code)) throw error;
