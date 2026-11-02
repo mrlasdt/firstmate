@@ -44,13 +44,12 @@ Give the captain a concise session-only recap without gathering fresh state.
 7. If no ordinary events occurred after the previous captain message but an older visibly open decision exists, report that decision instead of claiming nothing happened.
    If neither ordinary events nor visibly open decisions exist, say directly in one sentence that nothing happened after the previous captain message.
 
-8. After the normal recap, when the existing visibly open decision inventory contains decisions, begin a guided decision-clearing flow by presenting only the single open decision judged most impactful by the first mate.
-   Say the ordering is the first mate's pick.
-   Give enough escalation-quality context to decide easily: the decision, why it matters, the options, and a recommendation.
-   When the decision's captain-held task id is visible in the session history, read its stored write-up with `bin/fm-captain-hold.sh brief <task-id>` (read-only, the only lookup this flow adds) and present that write-up's sections in captain-facing words: why it matters, the background, one line per option with its consequence, and the recommendation with its reason.
+8. After the normal recap, when the existing visibly open decision inventory contains decisions, present every one of them at once, numbered, ordered most impactful first by the first mate's pick.
+   Say the ordering is the first mate's pick, and that the captain may answer several in one reply.
+   Give each decision enough escalation-quality context to decide easily: the decision, why it matters, the options, and a recommendation.
+   When a decision's captain-held task id is visible in the session history, read its stored write-up with `bin/fm-captain-hold.sh brief <task-id>` (read-only, the only lookup this flow adds) and present that write-up's sections in captain-facing words: why it matters, the background, one line per option with its consequence, and the recommendation with its reason.
    When no id is visible or the task has no stored write-up, build the same sections from the session history alone.
-9. When the captain answers the presented decision, present the next highest-impact decision from that existing inventory in the same form.
-   Continue one decision at a time until none remain, without starting this flow when the inventory is empty.
+   Do not start this flow when the inventory is empty.
 
 The current `/ahoy` message is outside the recap interval.
 A previous `/ahoy` is a real captain message and may be the next interval boundary.
