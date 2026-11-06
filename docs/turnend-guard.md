@@ -97,6 +97,8 @@ The guard cooperates with that arm rather than trusting a beacon left by the cyc
 ### Foreign session-lock owner
 
 When an active home instead has a live session lock held by a verified harness that the current session does not own, the Claude guard emits a read-only ownership diagnostic and allows the turn to end safely.
+The OpenCode plugin runs the guard with `--opencode`, which takes the same exit silently, so a standalone OpenCode session beside the owner stays quiet while the owner's watcher re-arms.
+The owning OpenCode session is unaffected and still receives the repair follow-up.
 
 Ownership is the shared `fm_session_lock_owned_by_self` verdict in `bin/fm-session-lock-lib.sh`.
 The current session owns the lock when either of these holds:
@@ -108,7 +110,7 @@ That second signal keeps a background Claude session owning its own lock after t
 The library's header owns the trust gate (`CLAUDE_PID` must be a Claude-shaped member of the current run).
 `bin/fm-lock.sh` owns the sidecar and the line-1 anchor it records for such a session.
 
-A Claude session that does not own the lock cannot arm or repair the home without stealing the live owner's lock, so blocking it would create an unbounded loop.
+A Claude or OpenCode session that does not own the lock cannot arm or repair the home without stealing the live owner's lock, so blocking it would create an unbounded loop.
 The lock-owning session remains responsible for restoring supervision.
 
 The exception has these limits:

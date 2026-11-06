@@ -110,10 +110,10 @@ def session_lock_text(path):
 PAYLOAD = json.dumps({"session_id": "synthetic-second", "stop_hook_active": True})
 
 
-def guard(env, label, prefix=""):
+def guard(env, label, prefix="", mode="--claude"):
     process = run(
         env,
-        prefix + "printf '%s\\n' '" + PAYLOAD + "' | \"$FM_ROOT_OVERRIDE/bin/fm-turnend-guard.sh\" --claude",
+        prefix + "printf '%s\\n' '" + PAYLOAD + "' | \"$FM_ROOT_OVERRIDE/bin/fm-turnend-guard.sh\" " + mode,
     )
     print(label, "rc=" + str(process.returncode), "stdout=" + repr(process.stdout), "stderr=" + repr(process.stderr), flush=True)
     return process
@@ -188,6 +188,14 @@ try:
         require("cannot and should not arm or repair" in result.stdout, "diagnostic did not explain the safe ownership boundary")
     require(not (root / "state/.turnend-claude-blocks").exists(), "foreign-owner guard must not consume its block budget")
     print("FIXED repeated non-owner Stops: all five ended safely", flush=True)
+
+    # OpenCode (a standalone session beside the owner) runs the guard with
+    # --opencode and must also stay quiet: no block, no stderr banner.
+    for number in range(1, 3):
+        quiet = guard(env, f"nonowner opencode stop {number}", mode="--opencode")
+        require(quiet.returncode == 0, f"foreign-owner OpenCode Stop {number} must end safely")
+        require("TURN WOULD END BLIND" not in quiet.stderr, "foreign-owner OpenCode Stop injected the repair banner")
+    print("FIXED non-owner OpenCode Stops ended safely without the repair banner", flush=True)
 
     beat.touch()
     fresh = guard(env, "fresh-beat-only counterfactual")
@@ -290,6 +298,14 @@ try:
     )
     print("single owner, no autoarm firing", "rc=" + str(sole_owner.returncode), "stdout=" + repr(sole_owner.stdout), "stderr=" + repr(sole_owner.stderr), flush=True)
     require("single_owner_guard_rc=2" in sole_owner.stdout, "a sole owner without supervision must retain the guard")
+    opencode_owner = run(
+        single_env,
+        '"$FM_ROOT_OVERRIDE/bin/fm-lock.sh"; '
+        'printf \'%s\\n\' \'{"stop_hook_active":false}\' | '
+        '"$FM_ROOT_OVERRIDE/bin/fm-turnend-guard.sh" --opencode; rc=$?; printf "opencode_owner_guard_rc=%s\\n" "$rc"; true',
+    )
+    print("single owner, opencode", "stdout=" + repr(opencode_owner.stdout), "stderr=" + repr(opencode_owner.stderr), flush=True)
+    require("opencode_owner_guard_rc=2" in opencode_owner.stdout, "the owning OpenCode session must retain the guard")
     print("COMPLETE", flush=True)
 finally:
     for process in reversed(PROCS):
