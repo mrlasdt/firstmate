@@ -46,6 +46,7 @@ Give the captain a concise session-only recap without gathering fresh state.
 
 8. After the normal recap, when the existing visibly open decision inventory contains decisions, present every one of them at once, numbered, ordered most impactful first by the first mate's pick.
    Say the ordering is the first mate's pick, and that the captain may answer several in one reply.
+   When the home's captain preference files define how decisions are labelled, ordered, or presented, follow them for that presentation instead; present every open decision at once and keep each write-up's content.
    Give each decision enough escalation-quality context to decide easily: the decision, why it matters, the options, and a recommendation.
    When a decision's captain-held task id is visible in the session history, read its stored write-up with `bin/fm-captain-hold.sh brief <task-id>` (read-only, the only lookup this flow adds) and present that write-up's sections in captain-facing words: why it matters, the background, one line per option with its consequence, and the recommendation with its reason.
    When no id is visible or the task has no stored write-up, build the same sections from the session history alone.
