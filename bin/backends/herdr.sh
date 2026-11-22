@@ -3467,7 +3467,7 @@ fm_backend_herdr_queued_enter_busy() {  # <target> <allow-rendered> [busy-harnes
 # occupy, bounding the Ctrl+U presses a verified clear may need. A literal
 # payload wraps, and clearing a multi-row leftover is one press per rendered
 # row (live Claude deletes one wrapped row per press). The composer read
-# itself is the full visible viewport (fm_backend_herdr_composer_content), so
+# itself is the full bottom viewport (fm_backend_herdr_composer_content), so
 # this bound no longer sizes a capture.
 fm_backend_herdr_proof_lines() {  # <text>
   local text=$1 lines
