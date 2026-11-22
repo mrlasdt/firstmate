@@ -1516,7 +1516,7 @@ Typing `/exit` makes Claude Code render its command popup between the composer a
 The composer row lands outside a bounded 20-row tail of the pane, so the adapter's bounded composer reads reported the composer as empty while it actually held `/exit`.
 The pre-Enter payload proof then judged the typed command unsent, pressed Ctrl+U, and reported `send-failed` without ever pressing Enter, so `bin/fm-control.sh exit` never exited the worker (and `bin/fm-secondmate-restart.sh` inherited the failure through its exit step).
 
-The fix captures the FULL VISIBLE VIEWPORT for every herdr adapter composer read (`pane read --source visible [--format ansi]`, `fm_backend_herdr_composer_state` and `fm_backend_herdr_composer_content`): the composer is by definition inside the viewport, and the viewport is the one bound that always contains it.
+The fix captures the FULL BOTTOM VIEWPORT for every herdr adapter composer read (viewport-height rows, see "Scrolled pane" below; `pane read --source visible [--format ansi]` was the original form, `fm_backend_herdr_composer_state` and `fm_backend_herdr_composer_content`): the composer is by definition inside the viewport, and the viewport is the one bound that always contains it.
 The shared inbox pending-line confirmation read (`bin/fm-task-inbox-lib.sh`) stays a bounded tail on every backend, herdr included; its payloads are task lines, not slash commands, so the popup shape does not arise there.
 The popup rows sit below the composer's closing rule, which is a structural edge row, so the shared classifier still selects only the composer and the menu rows never read as typed text.
 Verified live in the lab: with the popup up the state read answers `pending` (previously `empty`) and the payload proof returns `/exit` (previously empty), the submit presses Enter, and the Claude process exits, leaving the shell prompt.
@@ -3425,3 +3425,14 @@ The full run's native Ahoy cases depend on the model's own choices and failed wi
 
 A real `bin/fm-spawn.sh --scout --harness opencode --model opencode-go/deepseek-v4.1-flash` in a private tmux server recorded `opencode_version=1.18.20` (and `1.18.31` on the second release), launched the worker as `opencode --model opencode-go/deepseek-v4.1-flash --prompt <brief>` with no `--standalone`, and the worker answered its brief.
 `bin/fm-control.sh <task> exit` then resolved the typed `/exit` from that recorded major and returned both panes to the shell.
+
+## Scrolled pane (herdr 0.9.5, 2026-11-22)
+
+`pane read --source visible` follows the pane's scroll position.
+A captain scrolling up in a secondmate pane (`pane get` -> `scroll.offset_from_bottom` 74) made the composer read `unknown` (it reads `empty` unscrolled), so `fm-send` reported the doorbell did not reach, watcher re-rings failed, and `fm-control relaunch` could not send the exit command, until the pane was scrolled back.
+
+Verified live in a named non-default herdr lab (`bin/fm-herdr-lab.sh`):
+- `--source visible` at offset 74 returns rows from the middle of the scrollback, not the composer.
+- `--source recent --lines <scroll.viewport_rows>` returns the same bottom rows at offset 0 and offset 74, supports `--format ansi`, and leaves `offset_from_bottom` unchanged.
+
+The adapter now reads `pane get` for `viewport_rows` and captures `--source recent --lines <rows>` (fallback to `--source visible` when the height is unreadable). Regression: `test_composer_state_ignores_a_scrolled_pane` in `tests/fm-backend-herdr.test.sh`.
