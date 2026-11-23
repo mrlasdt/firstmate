@@ -68,6 +68,20 @@ if [ "${1:-}" = terminal ] && [ "${2:-}" = title ] && [ "${3:-}" = clear ]; then
   printf '{"result":{"reason":"%s"}}\n' "$reason"
   exit 0
 fi
+# The adapter's visible capture asks `pane get` for the viewport height before
+# it reads (bin/backends/herdr.sh fm_backend_herdr_viewport_rows). Answer that
+# lookup out of band, without consuming a numbered slot, unless the test
+# scripted this exact slot as a `pane get` reply (JSON, error, or exit code):
+# then it is the test's own pane get and is served in order. FM_HERDR_FAKE_SCROLL
+# (<offset>:<rows>) makes the lookup report a scrolled pane for the regression.
+if [ "${1:-}" = pane ] && [ "${2:-}" = get ] \
+   && [ ! -f "$RESP/$next.err" ] && [ ! -f "$RESP/$next.exit" ] \
+   && ! grep -qs '"result"\|"error"' "$RESP/$next.out" 2>/dev/null; then
+  scroll=${FM_HERDR_FAKE_SCROLL:-0:40}
+  printf '{"result":{"pane":{"pane_id":"%s","scroll":{"offset_from_bottom":%s,"max_offset_from_bottom":200,"viewport_rows":%s}}}}\n' \
+    "${3:-w1:p1}" "${scroll%%:*}" "${scroll##*:}"
+  exit 0
+fi
 n=$next
 echo "$n" > "$COUNT_FILE"
 [ -f "$RESP/$n.err" ] && cat "$RESP/$n.err" >&2
@@ -5398,10 +5412,30 @@ test_composer_state_claude_slash_popup_pushes_composer_above_tail_window() {
   out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state default:w1:p2' "$ROOT" )
   [ "$out" = pending ] || fail "a composer above a slash-command popup must read pending, got '$out'"
-  grep -F $'\x1f''pane'$'\x1f''read'$'\x1f''w1:p2'$'\x1f''--source'$'\x1f''visible' "$log" >/dev/null \
-    || fail "the composer state read must use the visible viewport"
-  [ "$(grep -c $'\x1f''--lines' "$log")" -eq 0 ] || fail "the composer state read must not be a bounded --lines tail"
+  grep -F $'\x1f''pane'$'\x1f''read'$'\x1f''w1:p2'$'\x1f''--source'$'\x1f''recent'$'\x1f''--lines'$'\x1f''40' "$log" >/dev/null \
+    || fail "the composer state read must capture the bottom viewport-height rows"
+  assert_not_contains "$(cat "$log")" $'\x1f''--source'$'\x1f''visible' "the composer state read must not use the scroll-following visible source"
   pass "fm_backend_herdr_composer_state: a slash-command popup cannot hide a typed composer"
+}
+
+# A captain scrolling up in a herdr pane moves `--source visible` with them
+# (observed on herdr 0.9.5: offset_from_bottom 74 made the composer read
+# `unknown`, so doorbells, submit confirmations and fm-control relaunch all
+# failed until the pane was scrolled back). The capture must read the BOTTOM of
+# the terminal, viewport-height rows via `--source recent`, whatever the offset.
+test_composer_state_ignores_a_scrolled_pane() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/composer-scrolled"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '  ╭────────────────────────╮\n  │ ❯                      │\n  ╰──────── Composer ──────╯\n\n  Shift+Tab:mode\n' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_HERDR_FAKE_SCROLL=74:40 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state default:w1:p2' "$ROOT" )
+  [ "$out" = empty ] || fail "a scrolled-up pane must still read its bottom composer, got '$out'"
+  grep -F $'\x1f''pane'$'\x1f''read'$'\x1f''w1:p2'$'\x1f''--source'$'\x1f''recent'$'\x1f''--lines'$'\x1f''40' "$log" >/dev/null \
+    || fail "a scrolled pane must be read bottom-anchored with the viewport height"
+  assert_not_contains "$(cat "$log")" $'\x1f''--source'$'\x1f''visible' "a scrolled pane must never be read through the scroll-following visible source"
+  assert_not_contains "$(cat "$log")" "scroll" "capture must not alter the captain's scroll position"
+  pass "fm_backend_herdr_composer_state: a scrolled-up pane still reads the bottom composer without moving the scroll"
 }
 
 test_send_text_submit_claude_slash_popup_composer_is_still_proven_and_submitted() {
@@ -5419,9 +5453,9 @@ test_send_text_submit_claude_slash_popup_composer_is_still_proven_and_submitted(
   enter_count=$(grep -c $'\x1f''pane'$'\x1f''send-keys'$'\x1f''w1:p2'$'\x1f''enter' "$log")
   [ "$enter_count" -eq 1 ] || fail "the proven typed command should be submitted once, sent $enter_count Enter(s)"
   [ "$(herdr_ctrl_u_count "$log")" -eq 0 ] || fail "a proven composer must not be cleared"
-  grep -F $'\x1f''pane'$'\x1f''read'$'\x1f''w1:p2'$'\x1f''--source'$'\x1f''visible' "$log" >/dev/null \
-    || fail "the payload proof must use the visible viewport"
-  [ "$(grep -c $'\x1f''--lines' "$log")" -eq 0 ] || fail "no composer read may be a bounded --lines tail"
+  grep -F $'\x1f''pane'$'\x1f''read'$'\x1f''w1:p2'$'\x1f''--source'$'\x1f''recent'$'\x1f''--lines'$'\x1f''40' "$log" >/dev/null \
+    || fail "the payload proof must capture the bottom viewport-height rows"
+  assert_not_contains "$(cat "$log")" $'\x1f''--source'$'\x1f''visible' "no composer read may use the scroll-following visible source"
   pass "fm_backend_herdr_send_text_submit: a typed slash command hidden behind its popup is still proven and submitted"
 }
 
@@ -6373,6 +6407,7 @@ test_send_text_submit_refuses_suffix_when_transcript_still_shows_the_head
 test_send_text_submit_accepts_marked_payloads_whose_read_back_drops_u2063
 test_send_text_submit_refuses_marked_digest_missing_its_head
 test_composer_state_claude_slash_popup_pushes_composer_above_tail_window
+test_composer_state_ignores_a_scrolled_pane
 test_send_text_submit_claude_slash_popup_composer_is_still_proven_and_submitted
 test_send_text_submit_claude_grey_slash_command_is_proven_and_submitted
 test_send_text_submit_lone_paste_placeholder_submits_the_long_payload
