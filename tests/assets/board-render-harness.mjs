@@ -4,7 +4,7 @@
 //
 // Usage: node board-render-harness.mjs <built-board.html>
 // Prints one JSON document:
-//   { stats:[{n,label}], underway:[{title,sub,badges}],
+//   { stats:[{n,label}], captains_call:[text], underway:[{title,sub,badges}],
 //     charted:[{title,sub,badges,pickable}], empty, more, error,
 //     cards:[{title, sections:[{k,v}], options:[{label,hint,rec}],
 //             briefMe:null|{label, before:{hidden,expanded,label,inlineHidden}, after:{...same},
@@ -32,11 +32,11 @@ class Node {
       contains: (c) => this.className.split(/\s+/).includes(c),
       remove: (c) => { this.className = this.className.split(/\s+/).filter((x) => x && x !== c).join(" "); },
       toggle: (c, force) => {
-        const has = this.className.split(/\s+/).includes(c);
-        const want = force === undefined ? !has : !!force;
-        if (want && !has) this.className = (this.className + " " + c).trim();
-        if (!want && has) this.className = this.className.split(/\s+/).filter((x) => x && x !== c).join(" ");
-        return want;
+        const classes = new Set(this.className.split(/\s+/).filter(Boolean));
+        const enabled = force ?? !classes.has(c);
+        if (enabled) classes.add(c); else classes.delete(c);
+        this.className = [...classes].join(" ");
+        return enabled;
       },
     };
   }
@@ -122,6 +122,9 @@ const rowsOf = (container) =>
 
 const uw = byId.get("bb-underway") || new Node("div");
 const underway = rowsOf(uw);
+const captains_call = (byId.get("bb-call") || new Node("div")).children
+  .filter((n) => n.className.split(/\s+/).includes("bb-decision"))
+  .map((n) => n.textContent);
 
 const ch = byId.get("bb-charted") || new Node("div");
 const charted = rowsOf(ch);
@@ -178,4 +181,4 @@ const cards = callNode.children
   });
 
 process.stdout.write(
-  JSON.stringify({ stats, underway, charted, empty, more, error: errorText, cards }) + "\n");
+  JSON.stringify({ stats, captains_call, underway, charted, empty, more, error: errorText, cards }) + "\n");
