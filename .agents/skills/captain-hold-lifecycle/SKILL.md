@@ -23,7 +23,7 @@ Put the question and its options in the hold reason, and keep one held task per 
 Register or re-hold through `bin/fm-captain-hold.sh hold`, which is idempotent per task id.
 Whenever you raise a decision, write its full write-up and store it with the hold through `--brief-file`: what is being decided, why it matters, the background in plain words, each option with what happens if it is picked, and the recommendation with its reason.
 `bin/fm-decision-brief-lib.sh` owns the fields and `bin/fm-captain-hold.sh brief <id>` reads it back.
-Chat, `/ahoy`, and the Bearings board all present that one stored record, never a fresh paraphrase, so the captain can decide without scrolling back or opening a report.
+Chat and the Bearings board both present that one stored record, never a fresh paraphrase, so the captain can decide without scrolling back or opening a report.
 A hold without a write-up still works, but write one for every decision the captain will see.
 After inventorying the whole report and review surface, firstmate runs `bin/fm-captain-hold.sh complete` with every captain-held task id, or with `--none` when nothing waits on the captain.
 A scout may attest its own empty inventory only through the narrow command exception in its generated brief's Definition of done.
