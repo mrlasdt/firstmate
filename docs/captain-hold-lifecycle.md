@@ -94,7 +94,7 @@ Every surface reads that one record rather than re-summarizing:
 - `bin/fm-bearings-snapshot.sh` lists `decision_briefs{id,path,question}` for shown main-home decisions, and `--fields briefs` adds the full write-up.
 - `bin/fm-bearings-board.sh build` validates an optional `brief` on a `decision` card and fills it from the stored record by task id, replacing any composer copy.
 - The board template renders the sections, a consequence line per option, and a "brief me" full view.
-- `/ahoy` and chat read the same record through `brief`.
+- Chat reads the same record through `brief`; `/ahoy` derives its decisions from visible session history and does not read it.
 
 A secondmate-owned decision's write-up stays in that secondmate home and is not projected into the main snapshot.
 

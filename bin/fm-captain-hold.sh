@@ -71,7 +71,7 @@
 # `--brief-file` is unchanged and never touches a stored write-up. `brief`
 # prints the stored write-up as plain text, or as its normalized JSON with
 # `--json`, and exits 1 when the task has none. Every surface that presents the
-# call (the bearings board, /ahoy, chat) shows this one record.
+# call (the bearings board and chat) shows this one record.
 #
 # `answer` records the captain's exact words and resolves the call in the same
 # act. It requires a non-empty captain decision file of at most 8192 bytes and
