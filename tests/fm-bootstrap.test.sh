@@ -325,16 +325,26 @@ test_record_hygiene_archives_old_orphan_status() {
   pass "bootstrap archives an old orphan status log and reports interleaved duplicates"
 }
 
+# Names, link targets, modes, sizes and content checksums of every state and data entry.
+# Directory mtimes are left out on purpose: a transient file that bootstrap creates and removes
+# moves its parent directory's minute-resolution mtime across a clock minute without changing a record.
+record_tree_snapshot() {
+  ( cd "$1" && find state data -print | LC_ALL=C sort &&
+    find state data -type f -exec cksum {} + | LC_ALL=C sort &&
+    find state data -exec ls -ldT {} + | awk '{print $1, $3, $4, $5, $NF}' | LC_ALL=C sort )
+}
+
 test_record_hygiene_absent_flag_is_inert() {
   local case_dir fakebin out_off out_on before after
   case_dir="$TMP_ROOT/record-hygiene-off"
   fakebin=$(seed_record_hygiene_home "$case_dir")
-  before=$(cd "$case_dir/home" && ls -laR state data)
+  before=$(record_tree_snapshot "$case_dir/home")
   out_off=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_BOOTSTRAP_NETWORK=skip FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  after=$(cd "$case_dir/home" && ls -laR state data)
+  after=$(record_tree_snapshot "$case_dir/home")
   assert_not_contains "$out_off" 'RECORD_HYGIENE' "bootstrap reported record hygiene without config/record-hygiene"
-  [ "$before" = "$after" ] || fail "bootstrap changed state or data records without config/record-hygiene"
+  [ "$before" = "$after" ] \
+    || fail "bootstrap changed state or data records without config/record-hygiene: $(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") | tr '\n' '|')"
   [ -f "$case_dir/home/state/orphan.status" ] || fail "bootstrap archived an orphan status log without config/record-hygiene"
   ! grep -q in_flight "$case_dir/tasks-axi-list.log" 2>/dev/null \
     || fail "bootstrap read the In-flight backlog for record hygiene without config/record-hygiene"
@@ -358,7 +368,7 @@ test_record_hygiene_watcher_absent_flag_is_inert() {
   status=0
   FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$ROOT" FM_LIVE=0 \
     FM_POLL=1 FM_HEARTBEAT=1 FM_HEARTBEAT_MAX=1 FM_CHECK_INTERVAL=999999 \
-    FM_RECORD_HYGIENE_TIMEOUT=1 timeout 5 "$ROOT/bin/fm-watch.sh" >"$case_dir/out" 2>"$case_dir/err" || status=$?
+    FM_RECORD_HYGIENE_TIMEOUT=1 fm_test_timed 5 "$ROOT/bin/fm-watch.sh" >"$case_dir/out" 2>"$case_dir/err" || status=$?
   { [ "$status" -eq 0 ] || [ "$status" -eq 124 ]; } \
     || fail "watcher failed without config/record-hygiene (exit=$status)"
   sleep 2
@@ -381,7 +391,7 @@ test_record_hygiene_reclaims_stale_running_marker() {
   status=0
   FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$ROOT" FM_LIVE=0 \
     FM_POLL=1 FM_HEARTBEAT=1 FM_HEARTBEAT_MAX=1 FM_CHECK_INTERVAL=999999 \
-    FM_RECORD_HYGIENE_TIMEOUT=1 timeout 30 "$ROOT/bin/fm-watch.sh" >"$case_dir/out" 2>"$case_dir/err" || status=$?
+    FM_RECORD_HYGIENE_TIMEOUT=1 fm_test_timed 30 "$ROOT/bin/fm-watch.sh" >"$case_dir/out" 2>"$case_dir/err" || status=$?
   { [ "$status" -eq 0 ] || [ "$status" -eq 124 ]; } \
     || fail "watcher failed while reclaiming stale hygiene marker (exit=$status)"
   tries=0
@@ -405,7 +415,7 @@ test_record_hygiene_watcher_data_is_defined() {
   status=0
   FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$ROOT" FM_LIVE=0 \
     FM_POLL=1 FM_HEARTBEAT=1 FM_HEARTBEAT_MAX=1 FM_CHECK_INTERVAL=999999 \
-    timeout 5 "$ROOT/bin/fm-watch.sh" >"$case_dir/out" 2>"$case_dir/err" || status=$?
+    fm_test_timed 5 "$ROOT/bin/fm-watch.sh" >"$case_dir/out" 2>"$case_dir/err" || status=$?
   { [ "$status" -eq 0 ] || [ "$status" -eq 124 ]; } \
     || fail "watcher failed during hygiene check (exit=$status)"
   assert_not_contains "$(cat "$case_dir/err")" 'DATA: unbound variable' \

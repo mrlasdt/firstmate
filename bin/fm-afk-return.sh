@@ -700,7 +700,7 @@ EOF
 
 return_reconcile() {
   local evidence blockers drain_err drained drain_ok=1 wake_ack_line wake_ack_through wake_ack_generation wedge escalations lifecycle_ok=1 since contract_since superseded_record retained_record
-  local archived_contract tag kind text retained_live restored_epoch
+  local archived_contract tag kind text retained_live restored_epoch brief brief_published
   evidence=$(mktemp "$STATE/.afk-return-evidence.XXXXXX") || return 1
   blockers=$(mktemp "$STATE/.afk-return-blockers.XXXXXX") || { rm -f "$evidence"; return 1; }
   drain_err=$(mktemp "$STATE/.afk-return-drain.XXXXXX") || { rm -f "$evidence" "$blockers"; return 1; }
@@ -849,7 +849,16 @@ EOF
     append_evidence lifecycle "status file unreadable: $STATUS_SCAN_ERROR; catch-up stays gated" "$evidence"
     lifecycle_ok=0
   fi
-  render_return_brief "$evidence" "$blockers" "$since" "$drain_ok"
+  # Render to a file and publish it with one checked cat. Printing the brief
+  # piecemeal to a dead stdout leaves unflushed bytes in the shell's stdio
+  # buffer on macOS bash 3.2, and every later command substitution (the brief's
+  # own counters) inherits and captures them, turning a publication failure
+  # into an arithmetic abort that skips the catch-up gate.
+  brief=$(mktemp "$STATE/.afk-return-brief.XXXXXX") || { rm -f "$evidence" "$blockers" "$drain_err"; return 1; }
+  render_return_brief "$evidence" "$blockers" "$since" "$drain_ok" > "$brief"
+  brief_published=1
+  cat "$brief" || brief_published=0
+  rm -f "$brief"
   if [ "$HELD_READ_FAILED" -eq 1 ]; then
     append_evidence lifecycle "held set unreadable: $HELD_READ_PATH; catch-up stays gated" "$evidence"
     lifecycle_ok=0
@@ -866,7 +875,7 @@ EOF
     return 3
   fi
 
-  if ! print_evidence "$evidence"; then
+  if [ "$brief_published" -ne 1 ] || ! print_evidence "$evidence"; then
     append_evidence lifecycle 'recovery evidence publication failed; retry catch-up before ordinary work' "$evidence"
     write_gate "$evidence" "$blockers" || { rm -f "$evidence" "$blockers" "$drain_err"; return 1; }
     printf 'fm-afk-return: recovery evidence could not be published; catch-up remains pending\n' >&2

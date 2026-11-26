@@ -260,7 +260,9 @@ test_missing_python_skips_the_age_ask() {
     [ -n "$bin" ] || fail "test needs $tool on PATH"
     ln -sf "$bin" "$fakebin/$tool"
   done
-  PATH="$fakebin" command -v python3 >/dev/null 2>&1 && fail "fixture PATH still finds python3"
+  # hash -r: bash 3.2 answers command -v from its command hash even under a
+  # temporary PATH, so a tool this script already ran would look still present.
+  (hash -r; PATH="$fakebin" command -v python3 >/dev/null 2>&1) && fail "fixture PATH still finds python3"
   now=$((epoch + 100))
   payload | env -u GROK_AGENT -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID \
     -u GROK_WORKSPACE_ROOT PATH="$fakebin" \
@@ -323,8 +325,8 @@ test_bad_payloads_and_missing_jq_are_silent() {
     ln -s "$entry" "$fakebin/$name" 2>/dev/null || true
   done
   rm -f "$fakebin/jq"
-  PATH="$fakebin" command -v dirname >/dev/null 2>&1 || fail "fixture PATH lost dirname"
-  PATH="$fakebin" command -v jq >/dev/null 2>&1 && fail "fixture PATH still finds jq"
+  (hash -r; PATH="$fakebin" command -v dirname >/dev/null 2>&1) || fail "fixture PATH lost dirname"
+  (hash -r; PATH="$fakebin" command -v jq >/dev/null 2>&1) && fail "fixture PATH still finds jq"
   rc=0
   payload | env -u GROK_AGENT -u GROK_HOOK_EVENT PATH="$fakebin" \
     FM_ROOT_OVERRIDE="$PRIMARY" FM_HOME="$PRIMARY" \

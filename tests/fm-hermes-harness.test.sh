@@ -44,7 +44,12 @@ for _ in $(seq 1 100); do [ -f "$TMP_ROOT/process/tui_gateway/ready" ] && break;
 native_args=$(ps -o args= -p "$process_pid")
 native_name=$(ps -o comm= -p "$process_pid")
 [ "$native_name" != hermes ] || fail 'identity fixture failed to separate name and module argv'
-[ "$(fm_agent_process_classify unrelated unrelated '' "$process_pid")" = agent ] || fail 'NUL argv identity lost when names/ps args are blind'
+# NUL-delimited argv exists only where /proc does (Linux); macOS has no such surface.
+if [ -r "/proc/$process_pid/cmdline" ]; then
+  [ "$(fm_agent_process_classify unrelated unrelated '' "$process_pid")" = agent ] || fail 'NUL argv identity lost when names/ps args are blind'
+else
+  [ "$(fm_agent_process_classify unrelated unrelated '' "$process_pid")" = other ] || fail 'blind process without /proc argv must stay other'
+fi
 [ "$(fm_agent_process_classify "$native_name" '' "$native_args")" = agent ] || fail 'ps argv identity lost when NUL argv is absent'
 [ "$(fm_agent_process_classify "$native_name" '' '')" = other ] || fail 'bare interpreter falsely identified without either argv source'
 kill "$process_pid"

@@ -235,7 +235,8 @@ test_engine_conversation_the_next_turn_would_not_resume_is_not_compacted() {
     FM_TEST_SUPERVISION_HOST_CLOCK="$home/park-clock" start_host "$home"
   wait_until 150 watcher_live "$home" || fail "warm-compact-stale: no watcher started"
   seed_idle_engine_record "$home" 600
-  sed -i 's/^model=.*/model=another-model/' "$home/state/.supervision-host-engine"
+  sed -i.bak 's/^model=.*/model=another-model/' "$home/state/.supervision-host-engine" \
+    && rm -f "$home/state/.supervision-host-engine.bak"
   echo 10 > "$home/park-clock"
   sleep 3
   [ "$(compact_calls "$home")" = 0 ] || fail "warm-compact-stale: compacted a conversation the next turn would not resume"
@@ -607,6 +608,8 @@ printf '%s\n' '      PID    PPID    PGID     WINPID   TTY         UID    STIME C
 printf '%s\n' '  4201508       0       0       7204  ?              0 22:24:48 C:\Users\u\.local\bin\claude.exe'
 SH
   chmod +x "$home/fakebin/uname" "$home/fakebin/ps"
+  # The faked MINGW uname selects GNU `stat -c`; keep it answering on a BSD host.
+  fm_test_gnu_stat_shim "$home/fakebin"
   printf 'win:7204\n' > "$home/state/.lock"
   env -u CLAUDE_PID -u CLAUDE_CODE_SESSION_ID \
     FM_HOME="$home" FM_CREW_STATE_BIN="$home/fakebin/fm-crew-state.sh" PATH="$home/fakebin:$PATH" \

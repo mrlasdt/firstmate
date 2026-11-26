@@ -59,8 +59,12 @@ wait_for_text() {
 # tmux capture-pane -S can no longer see them. Transcript assertions below need
 # real terminal scrollback, so each launch pins the regular TUI mode wherever the
 # flag exists; versions without the flag retain their existing launch arguments.
+# The help text goes to a file because Pi truncates it when stdout is a pipe, which
+# would hide the flag from a grep reading the pipe.
 PI_TUI_MODE_ARGS=
-if pi --help 2>&1 | grep -q -- '--tui-mode'; then
+PI_HELP_FILE="$TMP_ROOT/pi-help.txt"
+pi --help >"$PI_HELP_FILE" 2>&1 || true
+if grep -q -- '--tui-mode' "$PI_HELP_FILE"; then
   PI_TUI_MODE_ARGS='--tui-mode regular'
 fi
 

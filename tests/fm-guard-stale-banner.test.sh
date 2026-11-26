@@ -661,6 +661,8 @@ windows_table_fakebin() {  # <dir> <uname>
 printf '%s\n' '      PID    PPID    PGID     WINPID   TTY         UID    STIME COMMAND'
 printf '%s\n' '  4201508       0       0       7204  ?              0 22:24:48 C:\Users\u\AppData\Roaming\npm\pi.exe'
 SH
+  # The faked MINGW uname selects GNU `stat -c`; keep file ages real on a BSD host.
+  fm_test_gnu_stat_shim "$fakebin"
   chmod +x "$fakebin/uname" "$fakebin/ps"
   printf '%s\n' "$fakebin"
 }

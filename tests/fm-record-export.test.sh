@@ -506,10 +506,14 @@ test_archive_refuses_a_corrupt_committed_manifest() {
     case "$case_name" in
       wrong-task) sed 's/"task": "task-a"/"task": "another-task"/' "$manifest" > "$home/manifest.tmp" ;;
       trailing-garbage) cp "$manifest" "$home/manifest.tmp"; printf 'not-json\n' >> "$home/manifest.tmp" ;;
-      duplicate-key) sed '/"captured_at":/a\  "captured_at": "2000-01-01T00:00:00Z",' "$manifest" > "$home/manifest.tmp" ;;
+      duplicate-key) sed '/"captured_at":/a\
+  "captured_at": "2000-01-01T00:00:00Z",' "$manifest" > "$home/manifest.tmp" ;;
       wrong-type) sed 's/"captured_at": "[^"]*"/"captured_at": 1/' "$manifest" > "$home/manifest.tmp" ;;
-      extra-root) sed '/"complete": true/a\  "unexpected": true,' "$manifest" > "$home/manifest.tmp" ;;
-      extra-entry) sed '0,/"sha256": "[^"]*"/s//& , "unexpected": true/' "$manifest" > "$home/manifest.tmp" ;;
+      extra-root) sed '/"complete": true/a\
+  "unexpected": true,' "$manifest" > "$home/manifest.tmp" ;;
+      # Only the first sha256 is rewritten (the label loop copies the rest through),
+      # because BSD sed has no GNU "0,/re/" first-match address.
+      extra-entry) sed -e '/"sha256": "[^"]*"/{' -e 's/"sha256": "[^"]*"/& , "unexpected": true/' -e ':rest' -e 'n' -e 'b rest' -e '}' "$manifest" > "$home/manifest.tmp" ;;
     esac
     mv "$home/manifest.tmp" "$manifest"
     rc=0
@@ -614,13 +618,15 @@ test_archive_revalidates_sources_immediately_before_publication() {
 
   run_export "$home" archive-task task-a > "$home/archive.out" 2> "$home/archive.err" &
   archive_pid=$!
-  while [ -e "$archive/inbox/00000.msg" ]; do
+  # Directory listing order is filesystem-defined (hashed on APFS), so no single
+  # stale file is reliably removed first; watch the count instead.
+  while [ "$(find "$archive/inbox" -name '*.msg' 2>/dev/null | wc -l)" -ge 10000 ]; do
     kill -0 "$archive_pid" 2>/dev/null || break
     wait_count=$((wait_count + 1))
     [ "$wait_count" -le 1000 ] || break
-    sleep 0.01
+    sleep 0.005
   done
-  [ ! -e "$archive/inbox/00000.msg" ] \
+  [ "$(find "$archive/inbox" -name '*.msg' 2>/dev/null | wc -l)" -lt 10000 ] \
     || { wait "$archive_pid" || true; fail "archive did not begin replacing its stale partial generation"; }
   printf 'changed after final comparison\n' >> "$home/state/task-a.status"
   wait "$archive_pid" || rc=$?

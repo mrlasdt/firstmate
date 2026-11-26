@@ -646,9 +646,11 @@ write_forgejo_status_json() {
   if [ "$total" = 0 ]; then
     printf '{"state":"","total_count":0,"statuses":[]}\n' > "$file"
   else
-    printf '{"state":"%s","total_count":%s,"statuses":[%s]}\n' "$state" "$total" \
-      "$(seq "$total" | sed "s/.*/{\"context\":\"ci-&\",\"status\":\"$state\"}/" | paste -sd, -)" \
-      > "$file"
+    # Built outside the printf argument: bash 3.2 mangles the escaped quotes of a
+    # command substitution nested in a double-quoted word.
+    local entries
+    entries=$(seq "$total" | sed "s/.*/{\"context\":\"ci-&\",\"status\":\"$state\"}/" | paste -sd, -)
+    printf '{"state":"%s","total_count":%s,"statuses":[%s]}\n' "$state" "$total" "$entries" > "$file"
   fi
 }
 

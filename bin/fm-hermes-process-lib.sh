@@ -17,7 +17,8 @@ fm_hermes_process_matches() {  # <args> [pid]
       case "${word##*/}" in
         hermes) return 0 ;;
         node|node-*|node[0-9]*|MainThread) interpreter=node ;;
-        python|python[0-9]*) interpreter=python ;;
+        # The macOS framework build execs as .../Python.app/Contents/MacOS/Python.
+        python|python[0-9]*|Python) interpreter=python ;;
         *) return 1 ;;
       esac
       continue
