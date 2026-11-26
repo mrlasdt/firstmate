@@ -331,7 +331,7 @@ test_record_hygiene_archives_old_orphan_status() {
 record_tree_snapshot() {
   ( cd "$1" && find state data -print | LC_ALL=C sort &&
     find state data -type f -exec cksum {} + | LC_ALL=C sort &&
-    find state data -exec ls -ldT {} + | awk '{print $1, $3, $4, $5, $NF}' | LC_ALL=C sort )
+    find state data -exec ls -ld {} + | awk '{print $1, $3, $4, $5, $NF}' | LC_ALL=C sort )
 }
 
 test_record_hygiene_absent_flag_is_inert() {
