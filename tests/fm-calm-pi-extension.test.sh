@@ -4017,7 +4017,9 @@ SH
 
   : >"$dir/attempts-hang"
   : >"$out_file"
-  if FM_FAKE_CHROME_ATTEMPTS="$dir/attempts-hang" FM_CHROME_RENDER_WAIT_TICKS=3 \
+  # The budget must outlast the fake Chrome's own start-up under load: a 0.3 s
+  # budget could kill an attempt before its shell has recorded it, undercounting.
+  if FM_FAKE_CHROME_ATTEMPTS="$dir/attempts-hang" FM_CHROME_RENDER_WAIT_TICKS=30 \
     render_export_dom "$dir/chrome-hang" "$source_file" "$out_file" 9.9.9 >"$dir/report-hang"
   then
     fail "render_export_dom accepted a Chrome that never finished the DOM"
