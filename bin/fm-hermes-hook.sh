@@ -23,4 +23,4 @@ fi
 [ "$(cat "$BINDING")" = "$SESSION" ] || exit 0
 args=()
 [ "$VERDICT" != idle ] || args=(--turn-ended)
-"$SCRIPT_DIR/fm-busy-event.sh" apply "$STATE" "$ID" "$VERDICT" --gen "$GEN" --source hermes-hook --event "$VERDICT" "${args[@]}" >/dev/null
+"$SCRIPT_DIR/fm-busy-event.sh" apply "$STATE" "$ID" "$VERDICT" --gen "$GEN" --source hermes-hook --event "$VERDICT" ${args[@]+"${args[@]}"} >/dev/null

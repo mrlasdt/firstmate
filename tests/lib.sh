@@ -59,6 +59,13 @@ export FM_TEST_SEAM=1
 # under the marker. A case that verifies the refusal sets FM_TASK_ID itself.
 unset FM_TASK_ID
 
+# Clear the delegation-guard escape hatch. A worker or a deliberately launched
+# session may export FM_ALLOW_SUBAGENT=1, which makes
+# bin/fm-subagent-pretool-check.sh allow every delegation-shaped tool, so a
+# suite asserting the primary-home deny would fail only when run from such a
+# session. A case that verifies the escape hatch sets it itself.
+unset FM_ALLOW_SUBAGENT
+
 # Clear the launcher identity, terminal marker, runtime-backend selector, and
 # home/state overrides a suite inherits from the terminal that started it. A
 # session running inside herdr exports HERDR_ENV/HERDR_PANE_ID/HERDR_SOCKET_PATH/...
@@ -370,6 +377,61 @@ fm_test_nonplatform_binary() {
   cp "$bin" "$copy" || return 1
   codesign --force --sign - "$copy" >/dev/null 2>&1 || return 1
   printf '%s\n' "$copy"
+}
+
+# fm_test_named_shell <path>: make <path> a bash whose kernel-recorded process
+# name is the basename of <path>, so a fixture can stand in for a harness
+# process such as `codex` or `muse-bin-0.1.0`. Run it with `-c` and end the body
+# in something other than one bare command, so bash does not exec-replace the
+# named process. On Darwin it is a symlink, because a copied platform binary
+# fails code-signing validation and is killed even after an ad-hoc re-sign, and
+# `ps -o comm=` reports the symlink name; elsewhere it is a copy.
+fm_test_named_shell() {
+  local path=$1 shell
+  shell=$(command -v bash) || return 1
+  mkdir -p "$(dirname "$path")" || return 1
+  if [ "$(uname -s)" = Darwin ]; then
+    ln -sf "$shell" "$path"
+  else
+    cp "$shell" "$path"
+  fi
+}
+
+# fm_test_gnu_stat_shim <dir>: install <dir>/stat so a fixture that fakes a
+# MINGW `uname` (which makes the product call GNU `stat -c FMT`) still gets real
+# answers on a BSD host. GNU stat on the host is linked as is; BSD stat gets the
+# few GNU formats the product uses translated to their `-f` equivalents.
+fm_test_gnu_stat_shim() {
+  local dir=$1 real_stat
+  real_stat=$(command -v stat) || return 1
+  mkdir -p "$dir" || return 1
+  if "$real_stat" -c %Y "$dir" >/dev/null 2>&1; then
+    ln -sf "$real_stat" "$dir/stat"
+    return 0
+  fi
+  cat > "$dir/stat" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = -c ]; then
+  fmt=\$2
+  shift 2
+  fmt=\${fmt//%Y/%m}
+  fmt=\${fmt//%s/%z}
+  fmt=\${fmt//%a/%Lp}
+  exec "$real_stat" -f "\$fmt" "\$@"
+fi
+exec "$real_stat" "\$@"
+SH
+  chmod +x "$dir/stat"
+}
+
+# fm_test_timed <seconds> <command> [args...]: bound a command the way the
+# product does (bin/fm-timeout-lib.sh), because GNU `timeout` is not on the
+# default macOS PATH. Exit 124 means the bound was hit. Leading VAR=value
+# assignments work in bash and reach the command's environment.
+fm_test_timed() {
+  # shellcheck source=bin/fm-timeout-lib.sh
+  declare -F fm_run_timed >/dev/null || . "$ROOT/bin/fm-timeout-lib.sh"
+  fm_run_timed "$@"
 }
 
 # Remove a fixture tree even when it holds a read-only directory, such as the

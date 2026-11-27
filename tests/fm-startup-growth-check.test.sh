@@ -321,7 +321,8 @@ test_over_long_finding_set_is_capped_with_the_shared_marker() {
     seg="${seg}memory"
   done
   deep="$home/data"
-  while [ "${#deep}" -lt 1200 ]; do
+  # Stay under macOS's 1024-byte PATH_MAX; the budget finding repeats the path, so this still overflows the cap.
+  while [ "${#deep}" -lt 900 ]; do
     deep="$deep/$seg"
   done
   mkdir -p "$deep"

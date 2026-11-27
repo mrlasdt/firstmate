@@ -196,7 +196,7 @@ test_matrix_claude_named_session_titled_rule() {
   # Herdr gives no cursor, so before the titled rule was recognized the
   # cursorless path saw only the lower rule, read the idle composer `unknown`,
   # and the away-mode injector deferred every escalation on a named primary.
-  local rule titled multi idle ghost typed out claude_idle pi_idle
+  local rule titled multi multi_idle idle ghost typed out claude_idle pi_idle
   claude_idle=$(printf 'claude\tidle'); pi_idle=$(printf 'pi\tidle')
   rule='────────────────────────────────'
   titled='─────────────────────── Andrew ─'
@@ -207,8 +207,11 @@ test_matrix_claude_named_session_titled_rule() {
   assert_screen "named claude idle on tmux" empty "$CAPS_TMUX" "$idle" 2 "$claude_idle"
   # A multiword session name renders the same way, at the same width.
   multi='────────────────── Andrew Chen ─'
+  # Assign the substitution on its own: on stock macOS bash 3.2 a quoted
+  # replacement nested inside a double-quoted argument keeps its literal quotes.
+  multi_idle=${idle/"$titled"/"$multi"}
   assert_screen "multiword named claude idle on herdr" empty "$CAPS_STYLED" \
-    "${idle/"$titled"/"$multi"}" '' "$claude_idle"
+    "$multi_idle" '' "$claude_idle"
   assert_screen "multiword named claude typed on herdr" pending "$CAPS_STYLED" \
     "transcript line"$'\n'"$multi"$'\n'"❯ fix the login bug"$'\n'"$rule" '' "$claude_idle"
   # Claude's prompt suggestion is dim ghost text, not input.

@@ -705,19 +705,25 @@ is_proven_isolated_script() {
 # and other unproven work stays here. Derived rather than enumerated so a newly added test
 # lands here by default instead of falling out of every lane.
 list_portable_serial() {
-  local s base fam
+  local s fam all isolated_set result='' nl=$'\n'
+  # Both lists are captured once and the result is emitted once. Streaming
+  # them from process substitutions while forking per script lets bash 3.2
+  # lose a command substitution's output or re-emit a buffer, which dropped
+  # or duplicated scripts across the shard lanes.
+  all=$(all_repo_tests)
+  isolated_set="$nl$(list_proven_isolated)$nl"
   while IFS= read -r s; do
     [ -n "$s" ] || continue
-    base=$(basename "$s")
-    fam=$(family_for_basename "$base")
+    case "$isolated_set" in
+      *"$nl$s$nl"*) continue ;;
+    esac
+    fam=$(family_for_basename "${s##*/}")
     if [ "$fam" = "real-herdr-gated" ]; then
       continue
     fi
-    if is_proven_isolated_script "$s"; then
-      continue
-    fi
-    printf '%s\n' "$s"
-  done < <(all_repo_tests)
+    result+="$s$nl"
+  done <<<"$all"
+  printf '%s' "$result"
 }
 
 # Measured portable-serial script durations in milliseconds, from the CI timing
@@ -1032,7 +1038,12 @@ portable_serial_weight_for() {
 # Deterministic: candidates are ordered by hint descending then path, and ties
 # between equally loaded bins always take the lowest bin index.
 portable_serial_assignments() {
-  local ms script i best best_load
+  local ms script i best best_load result=''
+  # Listed up front, not streamed from a process substitution: each weight
+  # lookup below forks, so a streamed producer can be interrupted mid-write
+  # (bash 3.2 then re-emits its buffer and a script lands in two shards).
+  local scripts
+  scripts=$(list_portable_serial)
   local -a loads=()
   i=1
   while [ "$i" -le "$PORTABLE_SERIAL_SHARDS" ]; do
@@ -1052,13 +1063,14 @@ portable_serial_assignments() {
       i=$((i + 1))
     done
     loads[best]=$((best_load + ms))
-    printf '%s\t%s\n' "$best" "$script"
+    result+="$best"$'\t'"$script"$'\n'
   done < <(
     while IFS= read -r script; do
       [ -n "$script" ] || continue
       printf '%s\t%s\n' "$(portable_serial_weight_for "$script")" "$script"
-    done < <(list_portable_serial) | LC_ALL=C sort -t$'\t' -k1,1nr -k2,2
+    done <<<"$scripts" | LC_ALL=C sort -t$'\t' -k1,1nr -k2,2
   )
+  printf '%s' "$result"
 }
 
 # Parse "<k>of<n>" from a portable-serial shard lane and echo <k>, refusing when
@@ -1097,7 +1109,7 @@ select_proven_isolated() {
 }
 
 select_lane() {
-  local want=$1 s shard idx found=0
+  local want=$1 s shard idx found=0 assigned
   case "$want" in
     portable-parallel-1)
       while IFS= read -r s; do
@@ -1123,13 +1135,14 @@ select_lane() {
     portable-serial-*)
       # One separate-runner shard of the same remainder, still serial in itself.
       shard=$(portable_serial_shard_index "$want")
+      assigned=$(portable_serial_assignments)
       while IFS=$'\t' read -r idx s; do
         [ -n "$s" ] || continue
         if [ "$idx" = "$shard" ]; then
           add_script "$s"
           found=1
         fi
-      done < <(portable_serial_assignments)
+      done <<<"$assigned"
       ;;
     real-herdr-gated)
       select_family real-herdr-gated
